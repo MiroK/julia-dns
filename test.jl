@@ -27,6 +27,13 @@ jl = collect(0:10-1)
 py = np.arange(0, 10)
 @test_approx_eq_eps norm(py-jl) 0 1E-13
 
-# Wave numbers check
+# Check ffts
+A = rand(5, 3, 7)
+B = rfft(A, (1, 2, 3))   # This is done to get datatype of output
+fA = zeros(B)
+fftn_mpi!(A, fA)         # Fill fA
+AA = zeros(A)            # Container for ifft of fA
+ifftn_mpi!(fA, AA)       # Fill AA
+@test maximum(abs(AA - A)) < 1E-13
 
 println("Good to go!")

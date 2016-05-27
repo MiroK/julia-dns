@@ -43,6 +43,16 @@ function fftfreq(n::Int, d::Real=1.0)
     results * val
 end
 
-export ndgrid, fftfreq
+typealias RealT Float64
+typealias CmplT Complex64
+typealias RArray Array{RealT}
+typealias CArray Array{CmplT}
+
+"fftn"
+fftn_mpi!(u, fu) = copy!(fu, rfft(u, (1, 2, 3)))
+"ifftn"
+ifftn_mpi!(fu, u) = copy!(u, irfft(fu, first(size(u)), (1, 2, 3)))
+
+export ndgrid, fftfreq, RealT, CmplT, RArray, CArray, fftn_mpi!, ifftn_mpi!
 
 end
