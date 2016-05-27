@@ -39,11 +39,16 @@ X = Array[ndgrid(x, x, collect(rank*Np:(rank+1)*Np-1)*2*pi-N)...]
 # Complex grid
 kx = fftfreq(N, 1./N)
 kz = kx[1:(N÷2+1)]; kz[end] *= -1
-K = Array[ndgrid(kz, kx[(rank*Np+1):((rank+1)*Np-1)], kx)...]
-# K2 = sum(K*K, 0, dtype=int)
+K = Array[ndgrid(kx, kx[(rank*Np+1):((rank+1)*Np-1)], kz)...]
+K2 = sum(K[1].*K[1], 1)
+
+for i in 1:first(size(K2))
+    println(K2[i)
+end
+
 # K_over_K2 = K.astype(float) / where(K2 == 0, 1, K2).astype(float)
-kmax_dealias = 2*Nh/3
+# kmax_dealias = 2*Nh/3
 # dealias = array((abs(K[0]) < kmax_dealias)*(abs(K[1]) < kmax_dealias)*
 #                 (abs(K[2]) < kmax_dealias), dtype=bool)
-a = [1./6., 1./3., 1./3., 1./6.]  # Same!
-b = [0.5, 0.5, 1.]                # Same!
+# a = [1./6., 1./3., 1./3., 1./6.]  # Same!
+# b = [0.5, 0.5, 1.]                # Same!

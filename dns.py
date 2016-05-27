@@ -5,24 +5,18 @@ __license__  = "GNU Lesser GPL version 3 or any later version"
 
 from numpy import *
 from numpy.fft import fftfreq, fft, ifft, irfft2, rfft2, rfftn, irfftn
-# from mpi4py import MPI
-
-#try:
-    #from cbcdns.fft.wrappyfftw import *
-#except ImportError:
-    #pass # Rely on numpy.fft routines
 
 nu = 0.000625
 T = 0.1
 dt = 0.01
-N = 2**2
+N = 2**5
 # comm = MPI.COMM_WORLD
 num_processes = 1  #comm.Get_size()
 rank = 0  # comm.Get_rank()
 Np = N / num_processes
 X = mgrid[rank*Np:(rank+1)*Np, :N, :N].astype(float)*2*pi/N
 
-U     =   empty((3, Np, N, N))
+U       = empty((3, Np, N, N))
 curl    = empty((3, Np, N, N))
 
 U_hat =   empty((3, N, Np, N/2+1), dtype="complex")
@@ -36,7 +30,6 @@ Uc_hatT = empty((Np, N, N/2+1), dtype="complex")
 P     = empty((Np, N, N))
 P_hat = empty((N, Np, N/2+1), dtype="complex")
 
-U_mpi   = empty((num_processes, Np, Np, N/2+1), dtype="complex")
 # BP1
 
 kx = fftfreq(N, 1./N)
@@ -44,10 +37,6 @@ kx = fftfreq(N, 1./N)
 kz = kx[:(N/2+1)].copy(); kz[-1] *= -1
 K = array(meshgrid(kx, kx[rank*Np:(rank+1)*Np], kz, indexing='ij'), dtype=int)
 K2 = sum(K*K, 0, dtype=int)
-
-print K2
-exit()
-
 K_over_K2 = K.astype(float) / where(K2 == 0, 1, K2).astype(float)
 kmax_dealias = 2./3.*(N/2+1)
 dealias = array((abs(K[0]) < kmax_dealias)*(abs(K[1]) < kmax_dealias)*
@@ -57,17 +46,11 @@ b = [0.5, 0.5, 1.]
 # BP2
 
 def ifftn_mpi(fu, u):
-    Uc_hat[:] = ifft(fu, axis=0)
-    comm.Alltoall([Uc_hat, MPI.DOUBLE_COMPLEX], [U_mpi, MPI.DOUBLE_COMPLEX])
-    Uc_hatT[:] = rollaxis(U_mpi, 1).reshape(Uc_hatT.shape)
-    u[:] = irfft2(Uc_hatT, axes=(1, 2))
+    u[:] = irfftn(fu, axes=(0, 1, 2))
     return u
 
 def fftn_mpi(u, fu):
-    Uc_hatT[:] = rfft2(u, axes=(1,2))
-    U_mpi[:] = rollaxis(Uc_hatT.reshape(Np, num_processes, Np, N/2+1), 1, 0)
-    comm.Alltoall([U_mpi, MPI.DOUBLE_COMPLEX], [fu, MPI.DOUBLE_COMPLEX])
-    fu[:] = fft(fu, axis=0)
+    fu[:] = rfftn(u, axes=(0, 1, 2))
     return fu
 
 def Cross(a, b, c):
@@ -83,7 +66,6 @@ def Curl(a, c):
     return c
 # BP3
 
-@profile
 def ComputeRHS(dU, rk):
     if rk > 0:
         for i in range(3):
@@ -115,7 +97,8 @@ while t < T-1e-8:
     for i in range(3):
         U[i] = ifftn_mpi(U_hat[i], U[i])
 
-k = comm.reduce(0.5*sum(U*U)*(1./N)**3)
+k = 0.5*sum(U*U)*(1./N)**3
 if rank == 0:
     assert round(k - 0.124953117517, 7) == 0
+    print k
 # BP4

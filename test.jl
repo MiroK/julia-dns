@@ -28,16 +28,5 @@ py = np.arange(0, 10)
 @test_approx_eq_eps norm(py-jl) 0 1E-13
 
 # Wave numbers check
-N = Np = 4
-rank = 0
-kx = fftfreq(N, 1./N)
-kz = kx[1:(N÷2+1)]; kz[end] *= -1
-jl_K = ndgrid(kx, kx[(rank*Np+1):((rank+1)*Np-1)], kz)
-py_K = np.meshgrid(kx, kx[(rank*Np+1):((rank+1)*Np-1)], kz, indexing="ij")
-# Are K correct?
-@test_approx_eq_eps maximum([maximum(abs(jl-py)) for (jl, py) in zip(jl_K, py_K)]) 0 1E-13
-# Are K**2 correct
-
-# K over and dealiasing
 
 println("Good to go!")
