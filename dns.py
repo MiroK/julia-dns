@@ -9,7 +9,7 @@ from numpy.fft import fftfreq, fft, ifft, irfft2, rfft2, rfftn, irfftn
 nu = 0.000625
 T = 0.1
 dt = 0.01
-N = 2**5
+N = 2**6
 # comm = MPI.COMM_WORLD
 num_processes = 1  #comm.Get_size()
 rank = 0  # comm.Get_rank()
