@@ -1,39 +1,20 @@
-include("utils.jl")
-using Utils
-using Base.Test
+# Test correctness
 
-# Check if the functions do same as in python
-using PyCall
-@pyimport numpy as np
+# First capture python's answer 
+origstdout = STDOUT
+(outread, outwrite) = redirect_stdout()
+tic()
+run(`python dns.py`)
+py_time = toq()
+py = parse(Float64, strip(readline(outread)))
+redirect_stdout(origstdout)   # Cleanup
 
-# NDGRID
-# NOTE np.mgrid[] does not work because julia sees it as indexing
-py_grid = np.meshgrid(collect(1:3), collect(4:5), indexing="ij")
-jl_grid = Utils.ndgrid(1:3, 4:5)
-@test_approx_eq_eps norm(first(py_grid) - first(jl_grid)) 0 1E-13
-@test_approx_eq_eps norm(last(py_grid) - last(jl_grid)) 0 1E-13
+# julia's answer
+include("dns.jl")
+dns(2)
+tic()
+jl = dns(2^6)
+jl_time = toq()
 
-@pyimport numpy.fft as npfft
-# FFTFREQ
-py_freq = npfft.fftfreq(31, 0.123)
-jl_freq = Utils.fftfreq(31, 0.123)
-@test_approx_eq_eps norm(py_freq - jl_freq) 0 1E-13
-py_freq = npfft.fftfreq(20, 0.42)
-jl_freq = Utils.fftfreq(20, 0.42)
-@test_approx_eq_eps norm(py_freq - jl_freq) 0 1E-13
-
-# RANGE stuff
-jl = collect(0:10-1)
-py = np.arange(0, 10)
-@test_approx_eq_eps norm(py-jl) 0 1E-13
-
-# Check FFTs
-A = rand(5, 3, 7)
-B = rfft(A, (1, 2, 3))   # This is done to get datatype of output
-fA = zeros(B)
-fftn_mpi!(A, fA)         # Fill fA
-AA = zeros(A)            # Container for ifft of fA
-ifftn_mpi!(fA, AA)       # Fill AA
-@test maximum(abs(AA - A)) < 1E-13
-
-println("Good to go!")
+error = abs(py-jl)
+println("Python time $(py_time), Julia time w/out JIT $(jl_time), Error $(error)")

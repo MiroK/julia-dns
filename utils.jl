@@ -1,3 +1,7 @@
+# These functions are needed by dns.jl but are not part of julia.Base.
+# Function ndgrid is taken from julia examples.
+# fftfreq is implemented following scipy/numpy.
+
 module Utils
 
 "numpy.mgrid[v1, v2]"
@@ -43,15 +47,17 @@ function fftfreq(n::Int, d::Real=1.0)
     results * val
 end
 
+"fftn from dns.py"
+fftn_mpi!(u, fu) = copy!(fu, rfft(u, (1, 2, 3)))
+"ifftn from dns.py"
+ifftn_mpi!(fu, u) = copy!(u, irfft(fu, first(size(u)), (1, 2, 3)))
+
+# In dns we use real and complex arrays. Declaring these types here makes it
+# easier to propagate changes.
 typealias RealT Float64
 typealias CmplT Complex64
 typealias RArray Array{RealT}
 typealias CArray Array{CmplT}
-
-"fftn"
-fftn_mpi!(u, fu) = copy!(fu, rfft(u, (1, 2, 3)))
-"ifftn"
-ifftn_mpi!(fu, u) = copy!(u, irfft(fu, first(size(u)), (1, 2, 3)))
 
 export ndgrid, fftfreq, RealT, CmplT, RArray, CArray, fftn_mpi!, ifftn_mpi!
 
