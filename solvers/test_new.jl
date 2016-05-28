@@ -1,14 +1,13 @@
 "fftn from dns.py"
-fftn_mpi!(u, fu) = copy!(fu, rfft(u, (1, 2, 3)))
+fftn_mpi!(u, fu) = fu[:] = rfft(u, (1, 2, 3))
 
 "ifftn from dns.py"
-ifftn_mpi!(fu, u) = copy!(u, irfft(fu, first(size(u)), (1, 2, 3)))
+ifftn_mpi!(fu, u) = u[:] = irfft(fu, first(size(u)), (1, 2, 3))
 
 "View of A along the last axis"
 function _{T, N}(A::AbstractArray{T, N}, k::Integer)
-   dims = size(A)
-   @assert 1 <= k <= last(dims)
-   indices = [fill(Colon(), length(dims)-1)..., k]
+   @assert 1 <= k <= last(size(A))
+   indices = [fill(Colon(), N-1)..., k]
    slice(A, indices...)
 end
 

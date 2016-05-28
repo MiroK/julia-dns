@@ -46,16 +46,15 @@ function fftfreq(n::Int, d::Real=1.0)
 end
 
 "fftn from dns.py"
-fftn_mpi!(u, fu) = copy!(fu, rfft(u, (1, 2, 3)))
+fftn_mpi!(u, fu) = fu[:] = rfft(u, (1, 2, 3))
 
 "ifftn from dns.py"
-ifftn_mpi!(fu, u) = copy!(u, irfft(fu, first(size(u)), (1, 2, 3)))
+ifftn_mpi!(fu, u) = u[:] = irfft(fu, first(size(u)), (1, 2, 3))
 
 "View of A along the last axis"
 function _{T, N}(A::AbstractArray{T, N}, k::Integer)
-   dims = size(A)
-   @assert 1 <= k <= last(dims)
-   indices = [fill(Colon(), length(dims)-1)..., k]
+   @assert 1 <= k <= last(size(A))
+   indices = [fill(Colon(), N-1)..., k]
    slice(A, indices...)
 end
 
@@ -64,6 +63,7 @@ view(k::Integer) = (Colon(), Colon(), Colon(), k)
    
 # ----------------------------------------------------------------------------
 
+using Base.LinAlg.BLAS: axpy!
 #N = 2^5
 function dns(N)
     const nu = 0.000625
@@ -106,9 +106,12 @@ function dns(N)
     b = dt*[0.5, 0.5, 1.] 
 
     function Cross!(a, b, c)
-        fftn_mpi!(_(a, 2).*_(b, 3)-_(a, 3).*_(b, 2), _(c, 1))
-        fftn_mpi!(_(a, 3).*_(b, 1)-_(a, 1).*_(b, 3), _(c, 2))
-        fftn_mpi!(_(a, 1).*_(b, 2)-_(a, 2).*_(b, 1), _(c, 3))
+        work = _(a, 2).*_(b, 3)-_(a, 3).*_(b, 2)
+        fftn_mpi!(work, _(c, 1))
+        copy!(work, _(a, 3).*_(b, 1)-_(a, 1).*_(b, 3))
+        fftn_mpi!(work, _(c, 2))
+        copy!(work, _(a, 1).*_(b, 2)-_(a, 2).*_(b, 1))
+        fftn_mpi!(work, _(c, 3))
     end
 
     function Curl!(a, K, c)
@@ -137,28 +140,24 @@ function dns(N)
     U[view(2)...] = -cos(_(X, 1)).*sin(_(X, 2)).*cos(_(X, 3))
     U[view(3)...] = 0.
 
-
-    k = 0.5*sumabs2(U)*(1./N)^3
-    # println(">> $(k)")
-
     for i in 1:3 fftn_mpi!(_(U, i), _(U_hat, i)) end
 
     t = 0.0
     tstep = 0
     while t < T-1e-8
         t += dt; tstep += 1
-        copy!(U_hat1, U_hat); copy!(U_hat0, U_hat)
+        U_hat1[:] = U_hat; U_hat0[:] = U_hat
         
         for rk in 1:4
-            # ComputeRHS!(U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
+            ComputeRHS!(U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
             if rk < 4
-                U_hat[:] = U_hat0[:]
-                U_hat += b[rk]*dU
+                U_hat[:] = U_hat0
+                axpy!(b[rk], dU, U_hat)
             end
-            U_hat1 += a[rk]*dU
+            axpy!(a[rk], dU, U_hat1)
         end
-        copy!(U_hat, U_hat1)
-        # for i in 1:3 ifftn_mpi!(_(U_hat, i), _(U, i)) end
+        U_hat[:] = U_hat1
+        for i in 1:3 ifftn_mpi!(_(U_hat, i), _(U, i)) end
 
         # println("U $(sumabs2(U))")
         # println("U_hat $(sumabs2(U_hat))")
