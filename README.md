@@ -13,4 +13,4 @@ solver in Julia. By similar we mean code (i) that runs at C speed and (ii) is as
 + There will be multiple versions of solver `dns_i.jl`. Ideally, each one is faster than the predecessor and the ultimate one is at least on par with Python.
 + __This is very much a learning project!__
 
-
+### Status
