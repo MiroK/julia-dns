@@ -1,6 +1,61 @@
-include("utils.jl")
-using Utils
-using Base.LinAlg.BLAS: axpy!
+# This is the starting point. Faster but memory hungry. For the sake of being
+# self contained the utils module is replicated here.
+
+# Stuff that python imports.
+"numpy.mgrid[v1, v2]"
+function ndgrid{T}(v1::AbstractVector{T}, v2::AbstractVector{T})
+    m, n = length(v1), length(v2)
+    v1 = reshape(v1, m, 1)
+    v2 = reshape(v2, 1, n)
+    (repmat(v1, 1, n), repmat(v2, m, 1))
+end
+
+"Helper"
+function ndgrid_fill(a, v, s, snext)
+    for j = 1:length(a)
+        a[j] = v[div(rem(j-1, snext), s)+1]
+    end
+end
+
+"numpy.mgrid[v1, v2, v3, ...]"
+function ndgrid{T}(vs::AbstractVector{T}...)
+    n = length(vs)
+    sz = map(length, vs)
+    out = ntuple(i->Array{T}(sz), n)
+    s = 1
+    for i=1:n
+        a = out[i]::Array
+        v = vs[i]
+        snext = s*size(a,i)
+        ndgrid_fill(a, v, s, snext)
+        s = snext
+    end
+    out
+end
+
+"numpy.fft.fftfreq"
+function fftfreq(n::Int, d::Real=1.0)
+    val = 1.0/(n*d)
+    results = Array{Int}(n)
+    N = (n-1)÷2 + 1
+    p1 = 0:(N-1)
+    results[1:N] = p1
+    p2 = -n÷2:-1
+    results[N+1:end] = p2
+    results * val
+end
+
+"fftn from dns.py"
+fftn_mpi!(u, fu) = copy!(fu, rfft(u, (1, 2, 3)))
+"ifftn from dns.py"
+ifftn_mpi!(fu, u) = copy!(u, irfft(fu, first(size(u)), (1, 2, 3)))
+
+typealias RealT Float64
+typealias CmplT Complex64
+typealias RArray Array{RealT}
+typealias CArray Array{CmplT}
+
+# ----------------------------------------------------------------------------
 
 function dns(N)
     nu = 0.000625
@@ -24,10 +79,6 @@ function dns(N)
     Uc_hatT = CArray(Nh, N, N)
     # Real scalars
     P = RArray(N, N, N)
-    # Work array for cross
-    work_cross = RArray(N, N, N)
-    work_curl = CArray(Nh, N, N)
-    
     
     # Real grid
     x = collect(0:N-1)*2*pi/N
@@ -48,32 +99,26 @@ function dns(N)
     a = dt*[1./6., 1./3., 1./3., 1./6.]  
     b = dt*[0.5, 0.5, 1.]              
 
-
-    vnorm(U) = sum(U[1].^2 + U[2].^2 + U[3].^2)
-
-    function Cross!(work, a, b, c)
-        work[:] = a[2].*b[3]; work -= a[3].*b[2]; fftn_mpi!(work, c[1])
-        work[:] = a[3].*b[1]; work -= a[1].*b[3]; fftn_mpi!(work, c[2])
-        work[:] = a[1].*b[2]; work -= a[2].*b[1]; fftn_mpi!(work, c[3])
+    function Cross!(a, b, c)
+        fftn_mpi!(a[2].*b[3]-a[3].*b[2] , c[1])
+        fftn_mpi!(a[3].*b[1]-a[1].*b[3] , c[2])
+        fftn_mpi!(a[1].*b[2]-a[2].*b[1] , c[3])
     end
 
-    function Curl!(work, a, K, c)
-        work[:] = K[1].*a[2]; work -= K[2].*a[1]; work *= im; ifftn_mpi!(work, c[3])
-        work[:] = K[3].*a[1]; work -= K[1].*a[3]; work *= im; ifftn_mpi!(work, c[2])
-        work[:] = K[2].*a[3]; work -= K[3].*a[2]; work *= im; ifftn_mpi!(work, c[1])
-        #ifftn_mpi!(1.0im*(K[1].*a[2]-K[2].*a[1]), c[3])
-        #ifftn_mpi!(1.0im*(K[3].*a[1]-K[1].*a[3]), c[2])
-        #ifftn_mpi!(1.0im*(K[2].*a[3]-K[3].*a[2]), c[1])
+    function Curl!(a, K, c)
+        ifftn_mpi!(1.0im*(K[1].*a[2]-K[2].*a[1]), c[3])
+        ifftn_mpi!(1.0im*(K[3].*a[1]-K[1].*a[3]), c[2])
+        ifftn_mpi!(1.0im*(K[2].*a[3]-K[3].*a[2]), c[1])
     end
 
     "sources, rk, out"
-    function ComputeRHS!(work_curl, work_cross, U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
+    function ComputeRHS!(U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
         if rk > 1
             for i in 1:3 ifftn_mpi!(U_hat[i], U[i]) end
         end
 
-        Curl!(work_curl, U_hat, K, curl)
-        Cross!(work_cross, U, curl, dU)
+        Curl!(U_hat, K, curl)
+        Cross!(U, curl, dU)
         for i in 1:3 dU[i] .*= dealias end
 
         copy!(P_hat, dU[1].*K_over_K2[1]); for i in 2:3 P_hat += dU[i].*K_over_K2[i] end
@@ -95,7 +140,7 @@ function dns(N)
         U_hat1[:] = U_hat[:]; U_hat0[:]=U_hat[:]
         
         for rk in 1:4
-            ComputeRHS!(work_curl, work_cross, U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
+            ComputeRHS!(U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
             if rk < 4 U_hat[:] = U_hat0[:] + b[rk]*dU[:] end
             for i in 1:3 U_hat1[i] += a[rk]*dU[i] end
         end

@@ -18,6 +18,6 @@ jl, jl_time, jl_mem, jl_gc = jl_data[1:end-1]
 
 error = abs(py-jl)
 println("Error $(error)")
-println("Python time $(py_time), Julia time w/out JIT $(jl_time): $(round(jl_time/py_time, 2))")
+println("Python time $(py_time), Julia time w/out JIT $(jl_time): $(round(py_time/jl_time, 2))")
 println("GC time $(jl_gc) is $(100*round(jl_gc/jl_time, 2))\% of exec")
 println("Memory $(jl_mem/10^9)GB")
