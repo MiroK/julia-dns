@@ -9,7 +9,7 @@ py_time = toq()
 py = parse(Float64, strip(readline(outread)))
 redirect_stdout(origstdout)   # Cleanup
 
-version = (length(ARGS) > 0) ? parse(Int, ARGS[1]) : 0
+version = (length(ARGS) > 0) ? ARGS[1] : 0
 # julia's answer
 include("./solvers/dns_$(version).jl")
 dns(2)

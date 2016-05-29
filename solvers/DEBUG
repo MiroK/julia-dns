@@ -1,0 +1,10 @@
+1. Are K2, K_over_K2, dealis correctly assembled                          [OK]
+2. Is *dealias okay?                                                      [OK]
+3. FFTs                                                                   [OK]
+4. cross                                                                  [OK]
+5. curl                                                                   [OK]
+------------------------------------------------------------------------------
+1. Internals of compute rhs
+------------------------------------------------------------------------------
+1. rk loop
+2. time loop
