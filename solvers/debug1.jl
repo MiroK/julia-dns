@@ -162,3 +162,17 @@ Curl!(dU, K, a)
 Curld!(dUd, Kd, ad)
 println("curl $([maximum(abs(a[i]-_(ad, i))) for i in 1:3])")
 println("\t$(sumabs2(ad))\n")
+
+########################
+# 5.
+########################
+ys = rand(Complex128, Nh, N, N), rand(Complex128, Nh, N, N), rand(Complex128, Nh, N, N)
+Uhat = Array[ys...]
+
+Uhatd = Array{Complex128}(Nh, N, N, 3)
+for (i, yi) in enumerate(ys) Uhatd[view(i)...] = yi end
+
+d3 = [K2.*Uhat[i] for i in 1:3]
+d4 = K2d.*Uhatd
+println(":: $([sumabs2(d3[i]-_(d4, i)) for i in 1:3])")
+

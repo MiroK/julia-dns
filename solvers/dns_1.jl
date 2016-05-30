@@ -72,18 +72,13 @@ function dns(N)
     const Nh = N÷2+1
 
     # Real vectors
-    U    = Array{Float64}(N, N, N, 3)
+    U = Array{Float64}(N, N, N, 3)
     curl = similar(U)
     # Complex vectors
-    dU     = Array{Complex128}(Nh, N, N, 3)
+    dU = Array{Complex128}(Nh, N, N, 3)
     U_hat, U_hat0, U_hat1  = similar(dU), similar(dU), similar(dU)
     # Complex scalars
-    Uc_hat = Array{Complex128}(Nh, N, N)
-    P_hat  = similar(Uc_hat)
-    # Transpose
-    Uc_hatT = similar(Uc_hat)
-    # Real scalars
-    P = Array{Float64}(N, N, N)
+    P_hat = Array{Complex128}(Nh, N, N)
     # Real grid
     x = collect(0:N-1)*2*pi/N
     X = similar(U)
@@ -102,16 +97,14 @@ function dns(N)
     # Dealising mask
     const kmax_dealias = 2*Nh/3
     dealias = reshape(reduce(&, [abs(_(K, i)) .< kmax_dealias for i in 1:3]), Nh, N, N, 1)
+    # Runge-Kutta weights
     a = dt*[1./6., 1./3., 1./3., 1./6.]  
     b = dt*[0.5, 0.5, 1.] 
 
     function Cross!(a, b, c)
-        work = _(a, 2).*_(b, 3)-_(a, 3).*_(b, 2)
-        fftn_mpi!(work, _(c, 1))
-        copy!(work, _(a, 3).*_(b, 1)-_(a, 1).*_(b, 3))
-        fftn_mpi!(work, _(c, 2))
-        copy!(work, _(a, 1).*_(b, 2)-_(a, 2).*_(b, 1))
-        fftn_mpi!(work, _(c, 3))
+        fftn_mpi!(_(a, 2).*_(b, 3)-_(a, 3).*_(b, 2), _(c, 1))
+        fftn_mpi!(_(a, 3).*_(b, 1)-_(a, 1).*_(b, 3), _(c, 2))
+        fftn_mpi!(_(a, 1).*_(b, 2)-_(a, 2).*_(b, 1), _(c, 3))
     end
 
     function Curl!(a, K, c)
@@ -128,12 +121,12 @@ function dns(N)
 
         Curl!(U_hat, K, curl)
         Cross!(U, curl, dU)
-        dU .*= dealias
+        dU[:] = dU .* dealias
 
         P_hat[:] = sum(dU.*K_over_K2, 4)
 
-        dU -= P_hat.*K
-        dU -= nu*K2.*U_hat
+        axpy!(-1., P_hat.*K, dU)
+        axpy!(-1., nu*U_hat.*K2, dU)
     end
 
     U[view(1)...] = sin(_(X, 1)).*cos(_(X, 2)).*cos(_(X, 3))
@@ -159,11 +152,8 @@ function dns(N)
         U_hat[:] = U_hat1
         for i in 1:3 ifftn_mpi!(_(U_hat, i), _(U, i)) end
 
-        # println("U $(sumabs2(U))")
-        # println("U_hat $(sumabs2(U_hat))")
-        # println("P_hat $(sumabs2(P_hat))")
     end
 
     k = 0.5*sumabs2(U)*(1./N)^3
-    (k, tstep)
+    k
 end

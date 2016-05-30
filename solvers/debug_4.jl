@@ -66,26 +66,21 @@ function ComputeRHS!(U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
 
     Curl!(U_hat, K, curl)
     Cross!(U, curl, dU)
-
-    println("dU $([sumabs2(_(dU, i)) for i in 1:3]), $(eltype(dU))")
-    
-    dU .*= dealias
-
-    println("dU $([sumabs2(_(dU, i)) for i in 1:3]), $(eltype(dU))")
+    println(pointer(dU))
+    dU[:] = dU .* dealias
+    println(pointer(dU))
 
     P_hat[:] = sum(dU.*K_over_K2, 4)
-    println("P $(sumabs2(P_hat)), $([sumabs2(_(U_hat, i)) for i in 1:3])")
 
-    dU -= P_hat.*K
-    println("dU $([sumabs2(_(dU, i)) for i in 1:3]), $(eltype(dU))")
-    dU -= nu*K2.*U_hat   # <----- this seems a problem
+    dU[:] = dU - P_hat.*K
+    println(pointer(dU))
+    dU[:] = dU - nu*U_hat.*K2
+    println(pointer(dU))
 end
 
 U[view(1)...] = sin(_(X, 1)).*cos(_(X, 2)).*cos(_(X, 3))
 U[view(2)...] = -cos(_(X, 1)).*sin(_(X, 2)).*cos(_(X, 3))
 U[view(3)...] = 0.
-
-for i in 1:3 fftn_mpi!(_(U, i), _(U_hat, i)) end
 
 rk = 1
 nu = 0.000625
@@ -96,6 +91,8 @@ println("U $([sumabs2(_(U, i)) for i in 1:3])")
 println("P $(sumabs2(P_hat))\n")
 
 for i in 1:3 fftn_mpi!(_(U, i), _(U_hat, i)) end
+
+println(pointer(dU))
 ComputeRHS!(U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
 
 println("dU $([sumabs2(_(dU, i)) for i in 1:3])")

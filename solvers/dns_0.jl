@@ -51,7 +51,7 @@ fftn_mpi!(u, fu) = copy!(fu, rfft(u, (1, 2, 3)))
 ifftn_mpi!(fu, u) = copy!(u, irfft(fu, first(size(u)), (1, 2, 3)))
 
 typealias RealT Float64
-typealias CmplT Complex64
+typealias CmplT Complex128
 typealias RArray Array{RealT}
 typealias CArray Array{CmplT}
 
@@ -121,7 +121,7 @@ function dns(N)
         Cross!(U, curl, dU)
         for i in 1:3 dU[i] .*= dealias end
 
-        copy!(P_hat, dU[1].*K_over_K2[1]); for i in 2:3 P_hat += dU[i].*K_over_K2[i] end
+        P_hat[:] = reduce(+, [dU[i].*K_over_K2[i] for i in 1:3])
 
         for i in 1:3 dU[i] -= P_hat.*K[i] end
         for i in 1:3 dU[i] -= nu*K2.*U_hat[i] end

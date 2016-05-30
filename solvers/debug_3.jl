@@ -55,16 +55,12 @@ function ComputeRHS!(U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
 
     Curl!(U_hat, K, curl)
     Cross!(U, curl, dU)
-
-    println("dU $([sumabs2(dU[i]) for i in 1:3]), $(eltype(dU[1]))")
     for i in 1:3 dU[i] .*= dealias end
-    println("dU $([sumabs2(dU[i]) for i in 1:3]), $(eltype(dU[1]))")
 
-    copy!(P_hat, dU[1].*K_over_K2[1]); for i in 2:3 P_hat += dU[i].*K_over_K2[i] end
-    println("P $(sumabs2(P_hat)), $([sumabs2(U_hat[i]) for i in 1:3])")
+    P_hat[:] = reduce(+, [dU[i].*K_over_K2[i] for i in 1:3])
+    println("P $(sumabs2(P_hat))")
 
     for i in 1:3 dU[i] -= P_hat.*K[i] end
-    println("dU $([sumabs2(dU[i]) for i in 1:3]), $(eltype(dU[1]))")
     for i in 1:3 dU[i] -= nu*K2.*U_hat[i] end
 end
 

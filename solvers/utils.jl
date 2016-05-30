@@ -55,7 +55,7 @@ ifftn_mpi!(fu, u) = copy!(u, irfft(fu, first(size(u)), (1, 2, 3)))
 # In dns we use real and complex arrays. Declaring these types here makes it
 # easier to propagate changes.
 typealias RealT Float64
-typealias CmplT Complex64
+typealias CmplT Complex128
 typealias RArray Array{RealT}
 typealias CArray Array{CmplT}
 
