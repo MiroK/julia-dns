@@ -54,14 +54,22 @@ end
 
 "Indexes for viewing into last axis of 4d array"
 view(k::Integer) = (Colon(), Colon(), Colon(), k)
-   
+
+"Linear indexing along last axis"
+function linind{T, N}(A::AbstractArray{T, N})
+    L = prod(size(A)[1:N-1])
+    indices = [1]
+    for k in 1:last(size(A)) push!(indices, last(indices)+L) end
+    indices
+end
+
 # ----------------------------------------------------------------------------
 
 using Base.LinAlg.BLAS: axpy!
 function dns(N)
     const nu = 0.000625
     const dt = 0.01
-    const T = 1*dt
+    const T = 0.1
     const Nh = N÷2+1
 
     # Real vectors
@@ -82,9 +90,9 @@ function dns(N)
     K = Array{Float64}(Nh, N, N, 3)
     for (i, Ki) in enumerate(ndgrid(kz, kx, kx)) K[view(i)...] = Ki end
     # Square of wave number vectors
-    K2 = sumabs2(K, 4)
+    K2 = reshape(sumabs2(K, 4), Nh, N, N)
     # K/K2
-    K_over_K2 = K./K2
+    K_over_K2 = K./K2             
     # Fix division by zero
     for i in 1:3 K_over_K2[1, 1, 1, i] = K[1, 1, 1, i] end
     # Dealising mask
@@ -104,9 +112,9 @@ function dns(N)
     ifftn_mpi!(fu, u) = A_mul_B!(u, IRFFT, fu)
 
     function Cross!(a, b, c)
-        fftn_mpi!(_(a, 2).*_(b, 3)-_(a, 3).*_(b, 2), _(c, 1))
-        fftn_mpi!(_(a, 3).*_(b, 1)-_(a, 1).*_(b, 3), _(c, 2))
-        fftn_mpi!(_(a, 1).*_(b, 2)-_(a, 2).*_(b, 1), _(c, 3))
+        w = _(a, 2).*_(b, 3)-_(a, 3).*_(b, 2);    fftn_mpi!(w, _(c, 1))
+        w[:] = _(a, 3).*_(b, 1)-_(a, 1).*_(b, 3); fftn_mpi!(w, _(c, 2))
+        w[:] = _(a, 1).*_(b, 2)-_(a, 2).*_(b, 1); fftn_mpi!(w, _(c, 3))
     end
 
     function Curl!(a, K, c)
@@ -123,15 +131,25 @@ function dns(N)
 
         Curl!(U_hat, K, curl)
         Cross!(U, curl, dU)
-        # println(eltype(dU))
-         dU[:] = dU .* dealias
-        # broadcast!(*, dU, dealias)
-        # println(eltype(dU))
+        broadcast!(*, dU, dU, dealias)
 
-        P_hat[:] = sum(dU.*K_over_K2, 4)
+        # P_hat[:] = sum(dU.*K_over_K2, 4)
+        P_hat[:] = 0im
+        indices = linind(dU)
+        for axis in 1:last(size(dU))
+            for (j, i) in enumerate(indices[axis]:indices[axis+1]-1)
+                P_hat[j] += dU[i]*K_over_K2[i]
+            end
+        end
 
-        axpy!(-1., broadcast(*, P_hat, K), dU)
-        axpy!(-1., nu*broadcast(*, U_hat, K2), dU)
+        #axpy!(-1., broadcast(*, P_hat, K), dU)
+        #axpy!(-1., nu*broadcast(*, U_hat, K2), dU)
+        for axis in 1:last(size(dU))
+            for (j, i) in enumerate(indices[axis]:indices[axis+1]-1)
+                dU[i] -= P_hat[j]*K[i] + nu*U_hat[i]*K2[j]
+            end
+        end
+
     end
 
     U[view(1)...] = sin(_(X, 1)).*cos(_(X, 2)).*cos(_(X, 3))
