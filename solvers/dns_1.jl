@@ -1,6 +1,3 @@
-# This is the starting point. Faster but memory hungry. For the sake of being
-# self contained the utils module is replicated here.
-
 # Stuff that python imports.
 "numpy.mgrid[v1, v2]"
 function ndgrid{T}(v1::AbstractVector{T}, v2::AbstractVector{T})
@@ -77,7 +74,7 @@ function dns(N)
     curl = similar(U)
     # Complex vectors
     dU = Array{Complex128}(Nh, N, N, 3)
-    U_hat, U_hat0, U_hat1  = similar(dU), similar(dU), similar(dU)
+    U_hat, U_hat0, U_hat1 = similar(dU), similar(dU), similar(dU)
     # Complex scalars
     P_hat = Array{Complex128}(Nh, N, N)
     # Real grid
@@ -106,18 +103,16 @@ function dns(N)
     "fftn from dns.py"
     fftn_mpi!(u, fu) = A_mul_B!(fu, RFFT, u)
     "ifftn from dns.py"
-    # FIXME: in place!
     const IRFFT = plan_irfft(_(U_hat, 1), N, (1, 2, 3))
-    # ifftn_mpi!(fu, u) = u[:] = IRFFT*fu#A_mul_B!(u, IRFFT, fu)
     ifftn_mpi!(fu, u) = A_mul_B!(u, IRFFT, fu)
 
-    function Cross!(a, b, c)
-        w = _(a, 2).*_(b, 3)-_(a, 3).*_(b, 2);    fftn_mpi!(w, _(c, 1))
-        w[:] = _(a, 3).*_(b, 1)-_(a, 1).*_(b, 3); fftn_mpi!(w, _(c, 2))
-        w[:] = _(a, 1).*_(b, 2)-_(a, 2).*_(b, 1); fftn_mpi!(w, _(c, 3))
+    function Cross!(a, b, c)  #FIXME
+        fftn_mpi!(_(a, 2).*_(b, 3)-_(a, 3).*_(b, 2), _(c, 1))
+        fftn_mpi!(_(a, 3).*_(b, 1)-_(a, 1).*_(b, 3), _(c, 2))
+        fftn_mpi!(_(a, 1).*_(b, 2)-_(a, 2).*_(b, 1), _(c, 3))
     end
 
-    function Curl!(a, K, c)
+    function Curl!(a, K, c)  #FIXME
         ifftn_mpi!(im*(_(K, 1).*_(a, 2)-_(K, 2).*_(a, 1)), _(c, 3))
         ifftn_mpi!(im*(_(K, 3).*_(a, 1)-_(K, 1).*_(a, 3)), _(c, 2))
         ifftn_mpi!(im*(_(K, 2).*_(a, 3)-_(K, 3).*_(a, 2)), _(c, 1))
