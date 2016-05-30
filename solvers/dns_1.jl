@@ -45,15 +45,9 @@ function fftfreq(n::Int, d::Real=1.0)
     results * val
 end
 
-"fftn from dns.py"
-fftn_mpi!(u, fu) = fu[:] = rfft(u, (1, 2, 3))
-
-"ifftn from dns.py"
-ifftn_mpi!(fu, u) = u[:] = irfft(fu, first(size(u)), (1, 2, 3))
-
 "View of A along the last axis"
 function _{T, N}(A::AbstractArray{T, N}, k::Integer)
-   @assert 1 <= k <= last(size(A))
+   # @assert 1 <= k <= last(size(A))
    indices = [fill(Colon(), N-1)..., k]
    slice(A, indices...)
 end
@@ -64,11 +58,10 @@ view(k::Integer) = (Colon(), Colon(), Colon(), k)
 # ----------------------------------------------------------------------------
 
 using Base.LinAlg.BLAS: axpy!
-#N = 2^5
 function dns(N)
     const nu = 0.000625
     const dt = 0.01
-    const T = 0.1
+    const T = 1*dt
     const Nh = N÷2+1
 
     # Real vectors
@@ -100,6 +93,15 @@ function dns(N)
     # Runge-Kutta weights
     a = dt*[1./6., 1./3., 1./3., 1./6.]  
     b = dt*[0.5, 0.5, 1.] 
+    # Define FFT from plan
+    const RFFT = plan_rfft(_(U, 1), (1, 2, 3))
+    "fftn from dns.py"
+    fftn_mpi!(u, fu) = A_mul_B!(fu, RFFT, u)
+    "ifftn from dns.py"
+    # FIXME: in place!
+    const IRFFT = plan_irfft(_(U_hat, 1), N, (1, 2, 3))
+    # ifftn_mpi!(fu, u) = u[:] = IRFFT*fu#A_mul_B!(u, IRFFT, fu)
+    ifftn_mpi!(fu, u) = A_mul_B!(u, IRFFT, fu)
 
     function Cross!(a, b, c)
         fftn_mpi!(_(a, 2).*_(b, 3)-_(a, 3).*_(b, 2), _(c, 1))
@@ -116,17 +118,20 @@ function dns(N)
     "sources, rk, out"
     function ComputeRHS!(U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
         if rk > 1
-            for i in 1:3 ifftn_mpi!(_(U_hat, i), _(U, i)) end
+            for i in 1:3 ifftn_mpi!(U_hat[view(i)...], _(U, i)) end
         end
 
         Curl!(U_hat, K, curl)
         Cross!(U, curl, dU)
-        dU[:] = dU .* dealias
+        # println(eltype(dU))
+         dU[:] = dU .* dealias
+        # broadcast!(*, dU, dealias)
+        # println(eltype(dU))
 
         P_hat[:] = sum(dU.*K_over_K2, 4)
 
-        axpy!(-1., P_hat.*K, dU)
-        axpy!(-1., nu*U_hat.*K2, dU)
+        axpy!(-1., broadcast(*, P_hat, K), dU)
+        axpy!(-1., nu*broadcast(*, U_hat, K2), dU)
     end
 
     U[view(1)...] = sin(_(X, 1)).*cos(_(X, 2)).*cos(_(X, 3))
@@ -150,7 +155,7 @@ function dns(N)
             axpy!(a[rk], dU, U_hat1)
         end
         U_hat[:] = U_hat1
-        for i in 1:3 ifftn_mpi!(_(U_hat, i), _(U, i)) end
+        for i in 1:3 ifftn_mpi!(U_hat[view(i)...], _(U, i)) end
 
     end
 

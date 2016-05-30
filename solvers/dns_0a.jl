@@ -52,6 +52,9 @@ typealias CArray Array{CmplT}
 
 # ----------------------------------------------------------------------------
 
+using Base.LinAlg.BLAS: axpy!
+
+N = 16
 function dns(N)
     nu = 0.000625
     dt = 0.01
@@ -68,20 +71,15 @@ function dns(N)
     dU     = Array[CArray(Nh, N, N) for i in 1:3]
 
     # Complex scalars
-    Uc_hat = CArray(Nh, N, N)
     P_hat  = CArray(Nh, N, N)
-    # Transpose
-    Uc_hatT = CArray(Nh, N, N)
-    # Real scalars
-    P = RArray(N, N, N)
 
     # NOTE: how does the code look
     const RFFT = plan_rfft(U[1], (1, 2, 3))
     const IRFFT = plan_irfft(dU[1], N, (1, 2, 3))
     "fftn from dns.py"
-    fftn_mpi!(u, fu) = fu[:] = RFFT*u
+    fftn_mpi!(u, fu, A=RFFT) = A_mul_B!(fu, A, u)
     "ifftn from dns.py"
-    ifftn_mpi!(fu, u) = u[:] = IRFFT*fu
+    ifftn_mpi!(fu, u, A=IRFFT) = A_mul_B!(u, A, fu)
 
     # Real grid
     x = collect(0:N-1)*2*pi/N
@@ -117,17 +115,16 @@ function dns(N)
     "sources, rk, out"
     function ComputeRHS!(U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
         if rk > 1
-            for i in 1:3 ifftn_mpi!(U_hat[i], U[i]) end
+            for i in 1:3 ifftn_mpi!(copy(U_hat[i]), U[i]) end
         end
 
         Curl!(U_hat, K, curl)
         Cross!(U, curl, dU)
         for i in 1:3 dU[i] .*= dealias end
 
-        copy!(P_hat, dU[1].*K_over_K2[1]); for i in 2:3 P_hat += dU[i].*K_over_K2[i] end
+        P_hat[:] = reduce(+, [dU[i].*K_over_K2[i] for i in 1:3])
 
-        for i in 1:3 dU[i] -= P_hat.*K[i] end
-        for i in 1:3 dU[i] -= nu*K2.*U_hat[i] end
+        for i in 1:3 dU[i] -= P_hat.*K[i] + nu*K2.*U_hat[i] end
     end
 
     U[1][:] = sin(X[1]).*cos(X[2]).*cos(X[3])
@@ -136,20 +133,27 @@ function dns(N)
 
     for i in 1:3 fftn_mpi!(U[i], U_hat[i]) end
 
+
     t = 0.0
     tstep = 0
     while t < T-1e-8
         t += dt; tstep += 1
-        U_hat1[:] = U_hat[:]; U_hat0[:]=U_hat[:]
+        for i in 1:3 U_hat1[i] = U_hat0[i] = U_hat[i] end
         
         for rk in 1:4
             ComputeRHS!(U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
-            if rk < 4 U_hat[:] = U_hat0[:] + b[rk]*dU[:] end
-            for i in 1:3 U_hat1[i] += a[rk]*dU[i] end
+            if rk < 4
+                for i in 1:3 
+                    U_hat[i] = U_hat0[i]
+                    axpy!(b[rk], dU[i], U_hat[i])
+                end
+            end
+            for i in 1:3 axpy!(1., scale(dU[i], a[rk]), U_hat1[i]) end
+            for i in 1:3 axpy!(a[rk], dU[i], U_hat1[i]) end
         end
 
-        U_hat[:] = U_hat1[:]
-        for i in 1:3 ifftn_mpi!(U_hat[i], U[i]) end
+        for i in 1:3 U_hat[i] = U_hat1[i] end
+        for i in 1:3 ifftn_mpi!(copy(U_hat[i]), U[i]) end
     end
     
     k = 0.5*sum(U[1].*U[1]+U[2].*U[2]+U[3].*U[3])*(1./N)^3

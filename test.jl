@@ -1,13 +1,16 @@
 # Test correctness
-
-# First capture python's answer 
-origstdout = STDOUT
-(outread, outwrite) = redirect_stdout()
-tic()
-run(`python dns.py`)
-py_time = toq()
-py = parse(Float64, strip(readline(outread)))
-redirect_stdout(origstdout)   # Cleanup
+if "skip" ∉  ARGS 
+    # First capture python's answer 
+    origstdout = STDOUT
+    (outread, outwrite) = redirect_stdout()
+    tic()
+    run(`python dns.py`)
+    py_time = toq()
+    py = parse(Float64, strip(readline(outread)))
+    redirect_stdout(origstdout)   # Cleanup
+else
+    py_time, py= -1, -1
+end
 
 version = (length(ARGS) > 0) ? ARGS[1] : 0
 # julia's answer
