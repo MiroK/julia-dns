@@ -60,6 +60,25 @@ function linind{T, N}(A::AbstractArray{T, N})
     indices
 end
 
+"Component of the cross product [X \times Y]_k = w"
+function cross{Xtype, Ytype, Wtype}(kaxis::Integer,
+                                    X::AbstractArray{Xtype, 4},
+                                    Y::AbstractArray{Ytype, 4},
+                                    w::AbstractArray{Wtype, 3})
+    @assert 1 <= kaxis <= 3
+    @assert size(X) == size(Y)
+    @assert size(X)[1:3] == size(w)
+
+    indices = linind(X)
+    axis = [1, 2, 3, 1, 2]
+    iaxis, jaxis = axis[kaxis+1], axis[kaxis+2]
+    iindexes = indices[iaxis]:indices[iaxis+1]-1
+    jindexes = indices[jaxis]:indices[jaxis+1]-1
+    for (k, (i, j)) in enumerate(zip(iindexes, jindexes))
+        @inbounds w[k] = X[i]*Y[j] - X[j]*Y[i]
+    end
+end
+
 # ----------------------------------------------------------------------------
 
 using Base.LinAlg.BLAS: axpy!
@@ -94,10 +113,14 @@ function dns(N)
     for i in 1:3 K_over_K2[1, 1, 1, i] = K[1, 1, 1, i] end
     # Dealising mask
     const kmax_dealias = 2*Nh/3
-    dealias = reshape(reduce(&, [abs(_(K, i)) .< kmax_dealias for i in 1:3]), Nh, N, N, 1)
+    dealias = reshape(reduce(&, [abs(_(K, i)) .< kmax_dealias for i in 1:3]), Nh, N, N)
     # Runge-Kutta weights
     a = dt*[1./6., 1./3., 1./3., 1./6.]  
     b = dt*[0.5, 0.5, 1.] 
+    # Work arrays for cross
+    wcross = Array{eltype(U)}(N, N, N)
+    wcurl = Array{eltype(dU)}(Nh, N, N)
+
     # Define FFT from plan
     const RFFT = plan_rfft(_(U, 1), (1, 2, 3))
     "fftn from dns.py"
@@ -106,26 +129,29 @@ function dns(N)
     const IRFFT = plan_irfft(_(U_hat, 1), N, (1, 2, 3))
     ifftn_mpi!(fu, u) = A_mul_B!(u, IRFFT, fu)
 
-    function Cross!(a, b, c)  #FIXME
-        fftn_mpi!(_(a, 2).*_(b, 3)-_(a, 3).*_(b, 2), _(c, 1))
-        fftn_mpi!(_(a, 3).*_(b, 1)-_(a, 1).*_(b, 3), _(c, 2))
-        fftn_mpi!(_(a, 1).*_(b, 2)-_(a, 2).*_(b, 1), _(c, 3))
+    function Cross!(w, a, b, c)
+        for i in 1:3
+            cross(i, a, b, w)
+            fftn_mpi!(w, _(c, i))
+        end
     end
 
-    function Curl!(a, K, c)  #FIXME
-        ifftn_mpi!(im*(_(K, 1).*_(a, 2)-_(K, 2).*_(a, 1)), _(c, 3))
-        ifftn_mpi!(im*(_(K, 3).*_(a, 1)-_(K, 1).*_(a, 3)), _(c, 2))
-        ifftn_mpi!(im*(_(K, 2).*_(a, 3)-_(K, 3).*_(a, 2)), _(c, 1))
+    function Curl!(w, a, K, c)
+        for i in 3:-1:1
+            cross(i, K, a, w)
+            scale!(w, im)
+            ifftn_mpi!(w, _(c, i))
+        end
     end
 
     "sources, rk, out"
-    function ComputeRHS!(U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
+    function ComputeRHS!(wcross, wcurl, U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
         if rk > 1
             for i in 1:3 ifftn_mpi!(U_hat[view(i)...], _(U, i)) end
         end
 
-        Curl!(U_hat, K, curl)
-        Cross!(U, curl, dU)
+        Curl!(wcurl, U_hat, K, curl)
+        Cross!(wcross, U, curl, dU)
         broadcast!(*, dU, dU, dealias)
 
         # P_hat[:] = sum(dU.*K_over_K2, 4)
@@ -161,7 +187,7 @@ function dns(N)
         U_hat1[:] = U_hat; U_hat0[:] = U_hat
         
         for rk in 1:4
-            ComputeRHS!(U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
+            ComputeRHS!(wcross, wcurl, U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
             if rk < 4
                 U_hat[:] = U_hat0
                 axpy!(b[rk], dU, U_hat)
