@@ -5,6 +5,7 @@ __license__  = "GNU Lesser GPL version 3 or any later version"
 
 from numpy import *
 from numpy.fft import fftfreq, rfftn, irfftn
+import time
 
 nu = 0.000625
 T = 0.1
@@ -77,6 +78,7 @@ for i in range(3): U_hat[i] = fftn_mpi(U[i], U_hat[i])
 
 t = 0.0
 tstep = 0
+tic = time.time()
 while t < T-1e-8:
     t += dt; tstep += 1
     U_hat1[:] = U_hat0[:] = U_hat
@@ -87,6 +89,8 @@ while t < T-1e-8:
         U_hat1[:] += a[rk]*dt*dU
     U_hat[:] = U_hat1[:]
     for i in range(3): U[i] = ifftn_mpi(U_hat[i], U[i])
+one_step = (time.time() - tic)/tstep
 
 k = 0.5*sum(U*U)*(1./N)**3
 print k
+print one_step

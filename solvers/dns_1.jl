@@ -155,6 +155,7 @@ function dns(N)
 
     t = 0.0
     tstep = 0
+    tic()
     while t < T-1e-8
         t += dt; tstep += 1
         U_hat1[:] = U_hat; U_hat0[:] = U_hat
@@ -169,9 +170,9 @@ function dns(N)
         end
         U_hat[:] = U_hat1
         for i in 1:3 ifftn_mpi!(U_hat[view(i)...], _(U, i)) end
-
     end
+    one_step = toq()/tstep
 
     k = 0.5*sumabs2(U)*(1./N)^3
-    k
+    (k, one_step)
 end
