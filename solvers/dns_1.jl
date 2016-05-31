@@ -11,7 +11,7 @@ view(k::Int, N::Int=4) = [fill(Colon(), N-1)..., k]
 
 "View of A with last coordinate fixed at k"
 function call{T, N}(A::AbstractArray{T, N}, k::Int)
-   @assert 1 <= k <= last(size(A))
+   @assert 1 <= k <= size(A, N)
    indices = [fill(Colon(), N-1)..., k]
    slice(A, indices...)
 end
@@ -20,7 +20,7 @@ end
 function linind{T, N}(A::AbstractArray{T, N})
     L = prod(size(A)[1:N-1])
     indices = [1]
-    for k in 1:last(size(A)) push!(indices, last(indices)+L) end
+    for k in 1:size(A, N) push!(indices, last(indices)+L) end
     indices
 end
 
