@@ -1,56 +1,20 @@
-# Stuff that python imports.
-"numpy.mgrid[v1, v2]"
-function ndgrid{T}(v1::AbstractVector{T}, v2::AbstractVector{T})
-    m, n = length(v1), length(v2)
-    v1 = reshape(v1, m, 1)
-    v2 = reshape(v2, 1, n)
-    (repmat(v1, 1, n), repmat(v2, m, 1))
-end
+include("utils.jl")
+using Utils  # Now fftfreq and ndgrid are available
 
-"helper"
-function ndgrid_fill(a, v, s, snext)
-    for j = 1:length(a)
-        a[j] = v[div(rem(j-1, snext), s)+1]
-    end
-end
+# NOTE: Let A = rand(3, 3)
+# 1. A[:, 1] = rand(3)               Assigns to first column of A
+# 2. slice(A, :, 1) = rand(3)        Assigns to first column of A
+# 3. copy!(A[:, 1], rand(3))         Leaves A alone
+# 4. copy!(slice(A, :, 1), rand(3))  Assigns to first column of A
+# Mainly to use 1. and 3. we want a shortcut for fixing last axis
+view(k::Int, N::Int=4) = [fill(Colon(), N-1)..., k]
 
-"numpy.mgrid[v1, v2, v3, ...]"
-function ndgrid{T}(vs::AbstractVector{T}...)
-    n = length(vs)
-    sz = map(length, vs)
-    out = ntuple(i->Array{T}(sz), n)
-    s = 1
-    for i=1:n
-        a = out[i]::Array
-        v = vs[i]
-        snext = s*size(a,i)
-        ndgrid_fill(a, v, s, snext)
-        s = snext
-    end
-    out
-end
-
-"numpy.fft.fftfreq"
-function fftfreq(n::Int, d::Real=1.0)
-    val = 1.0/(n*d)
-    results = Array{Int}(n)
-    N = (n-1)÷2 + 1
-    p1 = 0:(N-1)
-    results[1:N] = p1
-    p2 = -n÷2:-1
-    results[N+1:end] = p2
-    results * val
-end
-
-"View of A along the last axis"
-function _{T, N}(A::AbstractArray{T, N}, k::Integer)
-   # @assert 1 <= k <= last(size(A))
+"View of A with last coordinate fixed at k"
+function call{T, N}(A::AbstractArray{T, N}, k::Int)
+   @assert 1 <= k <= last(size(A))
    indices = [fill(Colon(), N-1)..., k]
    slice(A, indices...)
 end
-
-"Indexes for viewing into last axis of 4d array"
-view(k::Integer) = (Colon(), Colon(), Colon(), k)
 
 "Linear indexing along last axis"
 function linind{T, N}(A::AbstractArray{T, N})
@@ -61,13 +25,10 @@ function linind{T, N}(A::AbstractArray{T, N})
 end
 
 "Component of the cross product [X \times Y]_k = w"
-function cross{Xtype, Ytype, Wtype}(kaxis::Integer,
-                                    X::AbstractArray{Xtype, 4},
-                                    Y::AbstractArray{Ytype, 4},
-                                    w::AbstractArray{Wtype, 3})
-    @assert 1 <= kaxis <= 3
-    @assert size(X) == size(Y)
-    @assert size(X)[1:3] == size(w)
+function cross!{S, T, R}(kaxis::Int, X::AbstractArray{S, 4},
+                                     Y::AbstractArray{T, 4},
+                                     w::AbstractArray{R, 3})
+    @assert 1 <= kaxis <= 3 && size(X) == size(Y) && size(X)[1:3] == size(w)
 
     indices = linind(X)
     axis = [1, 2, 3, 1, 2]
@@ -82,6 +43,7 @@ end
 # ----------------------------------------------------------------------------
 
 using Base.LinAlg.BLAS: axpy!
+
 function dns(N)
     const nu = 0.000625
     const dt = 0.01
@@ -95,7 +57,7 @@ function dns(N)
     dU = Array{Complex128}(Nh, N, N, 3)
     U_hat, U_hat0, U_hat1 = similar(dU), similar(dU), similar(dU)
     # Complex scalars
-    P_hat = Array{Complex128}(Nh, N, N)
+    P_hat = Array{eltype(dU)}(Nh, N, N)
     # Real grid
     x = collect(0:N-1)*2*pi/N
     X = similar(U)
@@ -103,17 +65,18 @@ function dns(N)
     # Wave number grid
     kx = fftfreq(N, 1./N)
     kz = kx[1:(N÷2+1)]; kz[end] *= -1
-    K = Array{Float64}(Nh, N, N, 3)
+    K = Array{eltype(U)}(Nh, N, N, 3)
     for (i, Ki) in enumerate(ndgrid(kz, kx, kx)) K[view(i)...] = Ki end
     # Square of wave number vectors
-    K2 = reshape(sumabs2(K, 4), Nh, N, N)
+    K2 = Array{eltype(U)}(Nh, N, N)
+    sumabs2!(K2, K)
     # K/K2
     K_over_K2 = K./K2             
     # Fix division by zero
     for i in 1:3 K_over_K2[1, 1, 1, i] = K[1, 1, 1, i] end
     # Dealising mask
     const kmax_dealias = 2*Nh/3
-    dealias = reshape(reduce(&, [abs(_(K, i)) .< kmax_dealias for i in 1:3]), Nh, N, N)
+    dealias = reshape(reduce(&, [abs(K(i)) .< kmax_dealias for i in 1:3]), Nh, N, N)
     # Runge-Kutta weights
     a = dt*[1./6., 1./3., 1./3., 1./6.]  
     b = dt*[0.5, 0.5, 1.] 
@@ -121,63 +84,57 @@ function dns(N)
     wcross = Array{eltype(U)}(N, N, N)
     wcurl = Array{eltype(dU)}(Nh, N, N)
 
-    # Define FFT from plan
-    const RFFT = plan_rfft(_(U, 1), (1, 2, 3))
-    "fftn from dns.py"
+    # Define (I)RFFTs
+    const RFFT = plan_rfft(wcross, (1, 2, 3))
     fftn_mpi!(u, fu) = A_mul_B!(fu, RFFT, u)
-    "ifftn from dns.py"
-    const IRFFT = plan_irfft(_(U_hat, 1), N, (1, 2, 3))
+
+    const IRFFT = plan_irfft(wcurl, N, (1, 2, 3))
     ifftn_mpi!(fu, u) = A_mul_B!(u, IRFFT, fu)
 
     function Cross!(w, a, b, c)
         for i in 1:3
-            cross(i, a, b, w)
-            fftn_mpi!(w, _(c, i))
+            cross!(i, a, b, w)
+            fftn_mpi!(w, c(i))
         end
     end
 
     function Curl!(w, a, K, c)
         for i in 3:-1:1
-            cross(i, K, a, w)
+            cross!(i, K, a, w)
             scale!(w, im)
-            ifftn_mpi!(w, _(c, i))
+            ifftn_mpi!(w, c(i))
         end
     end
 
-    "sources, rk, out"
     function ComputeRHS!(wcross, wcurl, U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
         if rk > 1
-            for i in 1:3 ifftn_mpi!(U_hat[view(i)...], _(U, i)) end
+            for i in 1:3 ifftn_mpi!(U_hat[view(i)...], U(i)) end
         end
 
         Curl!(wcurl, U_hat, K, curl)
         Cross!(wcross, U, curl, dU)
         broadcast!(*, dU, dU, dealias)
 
-        # P_hat[:] = sum(dU.*K_over_K2, 4)
         P_hat[:] = 0im
         indices = linind(dU)
         for axis in 1:last(size(dU))
             for (j, i) in enumerate(indices[axis]:indices[axis+1]-1)
-                P_hat[j] += dU[i]*K_over_K2[i]
+                @inbounds P_hat[j] += dU[i]*K_over_K2[i]
             end
         end
 
-        #axpy!(-1., broadcast(*, P_hat, K), dU)
-        #axpy!(-1., nu*broadcast(*, U_hat, K2), dU)
         for axis in 1:last(size(dU))
             for (j, i) in enumerate(indices[axis]:indices[axis+1]-1)
-                dU[i] -= P_hat[j]*K[i] + nu*U_hat[i]*K2[j]
+                @inbounds dU[i] -= P_hat[j]*K[i] + nu*U_hat[i]*K2[j]
             end
         end
-
     end
 
-    U[view(1)...] = sin(_(X, 1)).*cos(_(X, 2)).*cos(_(X, 3))
-    U[view(2)...] = -cos(_(X, 1)).*sin(_(X, 2)).*cos(_(X, 3))
+    U[view(1)...] = sin(X(1)).*cos(X(2)).*cos(X(3))
+    U[view(2)...] = -cos(X(1)).*sin(X(2)).*cos(X(3))
     U[view(3)...] = 0.
 
-    for i in 1:3 fftn_mpi!(_(U, i), _(U_hat, i)) end
+    for i in 1:3 fftn_mpi!(U(i), U_hat(i)) end
 
     t = 0.0
     tstep = 0
@@ -194,8 +151,9 @@ function dns(N)
             end
             axpy!(a[rk], dU, U_hat1)
         end
+
         U_hat[:] = U_hat1
-        for i in 1:3 ifftn_mpi!(U_hat[view(i)...], _(U, i)) end
+        for i in 1:3 ifftn_mpi!(U_hat[view(i)...], U(i)) end
     end
     one_step = toq()/tstep
 

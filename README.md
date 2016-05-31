@@ -14,3 +14,15 @@ solver in Julia. By similar we mean code (i) that runs at C speed and (ii) is as
 + __This is very much a learning project!__
 
 ### Status
++ `dns_0.jl` is an implementation which strives to mimic Python as much as
+  possible. Most noticably, we want U[i] to represent a slice of a 4d array. To
+  this end 4d arrays are implemented as array of 3d arrrays. On average, Julia
+  code is 1.6 times faster but `@time` reports upwards of 6GB allocated memory.
+  So we are happy with speed but not with memory consumption.
++ `dns_1.jl`is not an evolution of `dns_0.jl`. It uses planned FFTs, proper 4d
+  arrays, in-place operations (`axpy!`, `broadcast!`) and where in-place does
+  not work, e.g. `.*=`, the loops are explicit. However we use linear indexing so
+there are never 4 nested for loops. *This code runs 3.4 times faster than Python
+  making it on par with C. More importantly it practically uses only the memory
+  allocated for the data/work arrays* Compared to `dns_0.jl` the code did not
+loose much of compactness. In summary our goal on a single CPU was achieved.
