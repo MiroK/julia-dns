@@ -50,12 +50,11 @@ function dns(N)
     const T = 0.1
     const Nh = N÷2+1
 
-    typealias MyReal Float64
     # Real vectors
-    U = Array{MyReal}(N, N, N, 3)
+    U = Array{Float64}(N, N, N, 3)
     curl = similar(U)
     # Complex vectors
-    dU = Array{Complex{MyReal}}(Nh, N, N, 3)
+    dU = Array{Complex{Float64}}(Nh, N, N, 3)
     U_hat, U_hat0, U_hat1 = similar(dU), similar(dU), similar(dU)
     # Complex scalars
     P_hat = Array{eltype(dU)}(Nh, N, N)
