@@ -2,6 +2,8 @@ include("utils.jl")
 using Utils  # Now fftfreq and ndgrid are available
 using Base.Cartesian
 
+FFTW.set_num_threads(2)
+
 # NOTE: Let A = rand(3, 3)
 # 1. A[:, 1] = rand(3)               Assigns to first column of A
 # 2. slice(A, :, 1) = rand(3)        Assigns to first column of A
@@ -98,22 +100,20 @@ function dns(N)
         end
     end
 
-    function Curl!(w, a, K, c)
+    function Curl!(w, a, K, c, dealias)
         for i in 3:-1:1
             cross!(i, K, a, w)
             scale!(w, im)
+            broadcast!(*, w, w, dealias)
             ifftn_mpi!(w, c(i))
         end
     end
 
     function ComputeRHS!(wcross, wcurl, U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
-        if rk > 1
-            for i in 1:3 ifftn_mpi!(U_hat[view(i)...], U(i)) end
-        end
+        for i in 1:3 ifftn_mpi!(U_hat[view(i)...].*dealias, U(i)) end
 
-        Curl!(wcurl, U_hat, K, curl)
+        Curl!(wcurl, U_hat, K, curl, dealias)
         Cross!(wcross, U, curl, dU)
-        broadcast!(*, dU, dU, dealias)
 
         P_hat[:] = zero(eltype(P_hat))
         @nloops 4 i dU begin

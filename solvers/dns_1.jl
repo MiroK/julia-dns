@@ -85,10 +85,10 @@ function dns(N)
     wcurl = Array{eltype(dU)}(Nh, N, N)
 
     # Define (I)RFFTs
-    const RFFT = plan_rfft(wcross, (1, 2, 3))
+    const RFFT = plan_rfft(wcross, (1, 2, 3), flags=FFTW.PATIENT)
     fftn_mpi!(u, fu) = A_mul_B!(fu, RFFT, u)
 
-    const IRFFT = plan_irfft(wcurl, N, (1, 2, 3))
+    const IRFFT = plan_irfft(wcurl, N, (1, 2, 3), flags=FFTW.PATIENT)
     ifftn_mpi!(fu, u) = A_mul_B!(u, IRFFT, fu)
 
     function Cross!(w, a, b, c)
@@ -103,12 +103,12 @@ function dns(N)
             cross!(i, K, a, w)
             scale!(w, im)
             broadcast!(*, w, w, dealias) 
-            ifftn_mpi!(w, _(c, i))
+            ifftn_mpi!(w, c(i))
         end
     end
 
     function ComputeRHS!(wcross, wcurl, U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
-        for i in 1:3 ifftn_mpi!(U_hat[view(i)...].*dealias, _(U, i)) end
+        for i in 1:3 ifftn_mpi!(U_hat[view(i)...].*dealias, U(i)) end
 
         Curl!(wcurl, U_hat, K, curl, dealias)
         
@@ -157,7 +157,7 @@ function dns(N)
     end
     one_step = toq()/tstep
 
-    for i in 1:3 ifftn_mpi!(U_hat[view(i)...], _(U, i)) end
+    for i in 1:3 ifftn_mpi!(U_hat[view(i)...], U(i)) end
     k = 0.5*sumabs2(U)*(1./N)^3
     (k, one_step)
 end

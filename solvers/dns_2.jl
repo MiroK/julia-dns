@@ -90,6 +90,8 @@ function dns(N)
     comm = MPI.COMM_WORLD
     rank = MPI.Comm_rank(comm)
     num_processes = MPI.Comm_size(comm)
+    
+    FFTW.set_num_threads(2)
 
     const nu = 0.000625
     const dt = 0.01
@@ -242,5 +244,5 @@ function dns(N)
     
 end
 
-dns(2^6)
+dns(2^7)
 

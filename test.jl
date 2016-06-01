@@ -16,8 +16,8 @@ end
 version = (length(ARGS) > 0) ? ARGS[1] : 0
 # julia's answer
 include("./solvers/dns_$(version).jl")
-# dns(8)
-jl_data = @timed dns(2^6)
+dns(2)
+jl_data = @timed dns(2^7)
 jl, jl_time, jl_mem, jl_gc = jl_data[1:end-1]
 jl, jl_step = jl
 
