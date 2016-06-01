@@ -1,3 +1,6 @@
+import MPI
+
+
 # Stuff that python imports.
 "numpy.mgrid[v1, v2]"
 function ndgrid{T}(v1::AbstractVector{T}, v2::AbstractVector{T})
@@ -83,51 +86,80 @@ end
 
 using Base.LinAlg.BLAS: axpy!
 function dns(N)
+    MPI.Init()
+    comm = MPI.COMM_WORLD
+    rank = MPI.Comm_rank(comm)
+    num_processes = MPI.Comm_size(comm)
+
     const nu = 0.000625
     const dt = 0.01
     const T = 0.1
     const Nh = N÷2+1
+    const Np = N÷num_processes
 
     # Real vectors
-    U = Array{Float64}(N, N, N, 3)
+    U = Array{Float64}(N, N, Np, 3)
     curl = similar(U)
     # Complex vectors
-    dU = Array{Complex128}(Nh, N, N, 3)
+    dU = Array{Complex128}(Nh, Np, N, 3)
     U_hat, U_hat0, U_hat1 = similar(dU), similar(dU), similar(dU)
+    # MPI 
+    Uc_hatT = Array{Complex128}(Nh, N, Np)
+    Uc_hat  = Array{Complex128}(Nh, Np, N)
+    
     # Complex scalars
-    P_hat = Array{Complex128}(Nh, N, N)
+    P_hat = Array{Complex128}(Nh, Np, N)
     # Real grid
     x = collect(0:N-1)*2*pi/N
     X = similar(U)
-    for (i, Xi) in enumerate(ndgrid(x, x, x)) X[view(i)...] = Xi end
+    for (i, Xi) in enumerate(ndgrid(x, x, x[rank*Np+1:(rank+1)*Np])) X[view(i)...] = Xi end
     # Wave number grid
     kx = fftfreq(N, 1./N)
     kz = kx[1:(N÷2+1)]; kz[end] *= -1
-    K = Array{Float64}(Nh, N, N, 3)
-    for (i, Ki) in enumerate(ndgrid(kz, kx, kx)) K[view(i)...] = Ki end
+    K = Array{Float64}(Nh, Np, N, 3)
+    for (i, Ki) in enumerate(ndgrid(kz, kx[rank*Np+1:(rank+1)*Np], kx)) K[view(i)...] = Ki end
     # Square of wave number vectors
-    K2 = reshape(sumabs2(K, 4), Nh, N, N)
+    K2 = reshape(sumabs2(K, 4), Nh, Np, N)
     # K/K2
     K_over_K2 = K./K2             
     # Fix division by zero
-    for i in 1:3 K_over_K2[1, 1, 1, i] = K[1, 1, 1, i] end
+    if rank == 0
+        for i in 1:3 K_over_K2[1, 1, 1, i] = K[1, 1, 1, i] end
+    end
     # Dealising mask
     const kmax_dealias = 2*Nh/3
-    dealias = reshape(reduce(&, [abs(_(K, i)) .< kmax_dealias for i in 1:3]), Nh, N, N)
+    dealias = reshape(reduce(&, [abs(_(K, i)) .< kmax_dealias for i in 1:3]), Nh, Np, N)
     # Runge-Kutta weights
     a = dt*[1./6., 1./3., 1./3., 1./6.]  
     b = dt*[0.5, 0.5, 1.] 
     # Work arrays for cross
-    wcross = Array{eltype(U)}(N, N, N)
-    wcurl = Array{eltype(dU)}(Nh, N, N)
+    wcross = Array{eltype(U)}(N, N, Np)
+    wcurl = Array{eltype(dU)}(Nh, Np, N)
 
     # Define FFT from plan
-    const RFFT = plan_rfft(_(U, 1), (1, 2, 3))
+    const RFFT2 = plan_rfft(_(U, 1), (1, 2))
+    const FFTZ = plan_fft(Uc_hat, (3,))
+    
+    Uc_hatT_view = reshape(Uc_hatT, (Nh, Np, num_processes, Np))
+    Uc_hat_view  = reshape(Uc_hat , (Nh, Np, Np, num_processes))
+    
     "fftn from dns.py"
-    fftn_mpi!(u, fu) = A_mul_B!(fu, RFFT, u)
+    function fftn_mpi!(u, fu)
+      Uc_hatT[:] = RFFT2*u
+      permutedims!(Uc_hat_view, Uc_hatT_view, (1,2,4,3))
+      Uc_hat_view[:,:,:,:] = MPI.Alltoall(Uc_hat_view, Nh*Np*Np, comm)
+      fu[:] = FFTZ*Uc_hat
+    end
+    
     "ifftn from dns.py"
-    const IRFFT = plan_irfft(_(U_hat, 1), N, (1, 2, 3))
-    ifftn_mpi!(fu, u) = A_mul_B!(u, IRFFT, fu)
+    const IRFFT2 = plan_irfft(Uc_hatT, N, (1, 2))
+    const IFFTZ = plan_ifft(Uc_hat, (3,))
+    function ifftn_mpi!(fu, u)
+       Uc_hat[:] = IFFTZ*fu
+       Uc_hat_view[:,:,:,:] = MPI.Alltoall(Uc_hat_view, Nh*Np*Np, comm)
+       permutedims!(Uc_hatT_view, Uc_hat_view, (1,2,4,3))
+       u[:] = IRFFT2*Uc_hatT
+    end
 
     function Cross!(w, a, b, c)
         for i in 1:3
@@ -200,6 +232,15 @@ function dns(N)
     one_step = toq()/tstep
 
     for i in 1:3 ifftn_mpi!(U_hat[view(i)...], _(U, i)) end
-    k = 0.5*sumabs2(U)*(1./N)^3
-    (k, one_step)
+    
+    k = MPI.Reduce(0.5*sumabs2(U)*(1./N)^3, MPI.SUM, 0, comm)
+    if rank == 0
+      println("$(k), $(one_step)")
+    end
+    
+    MPI.Finalize()
+    
 end
+
+dns(2^7)
+
