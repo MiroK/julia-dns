@@ -31,6 +31,9 @@ py = np.arange(0, 10)
 @test_approx_eq_eps norm(py-jl) 0 1E-13
 
 # Check FFTs
+fftn_mpi!(u, fu) = fu[:] = rfft(u, (1, 2, 3))
+ifftn_mpi!(fu, u) = u[:] = irfft(fu, 5, (1, 2, 3))
+
 A = rand(5, 3, 7)
 B = rfft(A, (1, 2, 3))   # This is done to get datatype of output
 fA = zeros(B)

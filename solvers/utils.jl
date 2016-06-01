@@ -47,18 +47,6 @@ function fftfreq(n::Int, d::Real=1.0)
     results * val
 end
 
-"fftn from dns.py"
-fftn_mpi!(u, fu) = copy!(fu, rfft(u, (1, 2, 3)))
-"ifftn from dns.py"
-ifftn_mpi!(fu, u) = copy!(u, irfft(fu, first(size(u)), (1, 2, 3)))
-
-# In dns we use real and complex arrays. Declaring these types here makes it
-# easier to propagate changes.
-typealias RealT Float64
-typealias CmplT Complex128
-typealias RArray Array{RealT}
-typealias CArray Array{CmplT}
-
-export ndgrid, fftfreq, RealT, CmplT, RArray, CArray, fftn_mpi!, ifftn_mpi!
+export ndgrid, fftfreq
 
 end

@@ -242,5 +242,5 @@ function dns(N)
     
 end
 
-dns(2^7)
+dns(2^6)
 
