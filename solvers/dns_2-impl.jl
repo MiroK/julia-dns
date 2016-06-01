@@ -1,4 +1,3 @@
-import MPI
 include("utils.jl")
 using Utils  # Now fftfreq and ndgrid are available
 
@@ -50,7 +49,6 @@ using Base.LinAlg.BLAS: axpy!
 
 function dns(N)
     @assert mod(N, 2) == 0 "Need even number of processes"
-    MPI.Init()
     const comm = MPI.COMM_WORLD
     const rank = MPI.Comm_rank(comm)
     const num_processes = MPI.Comm_size(comm)
@@ -196,7 +194,4 @@ function dns(N)
     if rank == 0
       println("$(k), $(one_step)")
     end
-    MPI.Finalize()
 end
-
-dns(2^6)
