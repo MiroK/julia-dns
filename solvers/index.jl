@@ -43,10 +43,10 @@ using Base.Cartesian
                                     K_over_K2::Array{T, N},
                                     P_hat::Array{Complex{T}, M})
     quote
-        P_hat[:] = zero(Complex128)
+        P_hat[:] = zero(Complex{T})
         @assert M == N-1
         @nloops $N i dU begin
-            (@nref $M P_hat i) += (@nref $N dU i) * (@nref $N K_over_K2 i)
+            @inbounds (@nref $M P_hat i) += (@nref $N dU i) * (@nref $N K_over_K2 i)
         end
     end
 end

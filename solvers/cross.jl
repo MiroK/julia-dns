@@ -15,6 +15,8 @@ W1 = similar(X)
 W2 = similar(X)
 W3 = similar(X)
 W4 = similar(X)
+WG = similar(X)
+wG = rand(n, n, n) 
 
 function cross_1(X, Y, W)
     _(W, 1)[:] = _(X, 2).*_(Y, 3)-_(X, 3).*_(Y, 2)
@@ -85,16 +87,64 @@ function cross_4(X, Y, W)
     end
 end
 
+# Generated stuff
+using Base.Cartesian
+
+function crossG{T1, T2, T3}(k::Int,
+                                       X::AbstractArray{T1, 4},
+                                       Y::AbstractArray{T2, 4},
+                                       w::AbstractArray{T3, 3})
+    @assert size(X) == size(Y) && size(X)[1:3] == size(w)
+    kp, kpp = (k+1-1)%3+1, (k+2-1)%3+1
+    @nloops 3 i w begin
+        @inbounds (@nref 3 w i) = 
+        (@nref 4 X d->(d<4)?i_d:kp)*(@nref 4 Y d->(d<4)?i_d:kpp)-
+        (@nref 4 X d->(d<4)?i_d:kpp)*(@nref 4 Y d->(d<4)?i_d:kp)
+    end
+end
+
+@generated function crossG{T1, T2, T3}(X::AbstractArray{T1, 4},
+                                       Y::AbstractArray{T2, 4},
+                                       W::AbstractArray{T3, 4})
+    quote
+        @assert size(X) == size(Y) && size(X) == size(W)
+        @nloops 4 i W d->(d == 4)?(kp = (i_4+1-1)%3+1; kpp = (i_4+2-1)%3+1):nothing begin
+            @inbounds (@nref 4 W i) = 
+            (@nref 4 X d->(d<4)?i_d:kp)*(@nref 4 Y d->(d<4)?i_d:kpp)-
+            (@nref 4 X d->(d<4)?i_d:kpp)*(@nref 4 Y d->(d<4)?i_d:kp)
+        end
+    end
+end
+
 cross_1(X, Y, W1)
 cross_2(X, Y, W2)
 cross_3(X, Y, W3)
 cross_4(X, Y, W4)
+crossG(X, Y, WG)
+
 println(sumabs2(W1-W2))
 println(sumabs2(W1-W3))
 println(sumabs2(W1-W4))
+println(sumabs2(W1-WG))
 
 w = rand(n, n, n) 
 for i in 1:3
     cross(i, X, Y, w)
     println("$(i) $(sumabs2(w - _(W1, i)))")
+end
+
+for i in 1:3
+    crossG(i, X, Y, wG)
+    println("$(i) $(sumabs2(wG - _(W1, i)))")
+end
+
+println()
+W = similar(WG)
+for (i, f) in enumerate((cross_1, cross_2, cross_3, cross_4, crossG))
+    println(i)
+    begin ()-> tic()
+        f(X, Y, W)
+        @time f(X, Y, W)
+    end
+    println()
 end

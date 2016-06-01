@@ -1,5 +1,6 @@
 include("utils.jl")
 using Utils  # Now fftfreq and ndgrid are available
+using Base.Cartesian
 
 # NOTE: Let A = rand(3, 3)
 # 1. A[:, 1] = rand(3)               Assigns to first column of A
@@ -25,17 +26,16 @@ function linind{T, N}(A::AbstractArray{T, N})
 end
 
 "Component of the cross product [X \times Y]_k = w"
-function cross!{S, T, R}(kaxis::Int, X::AbstractArray{S, 4},
-                                     Y::AbstractArray{T, 4},
-                                     w::AbstractArray{R, 3})
-    @assert 1 <= kaxis <= 3 && size(X) == size(Y) && size(X)[1:3] == size(w)
-
-    indices = linind(X)
-    iaxis, jaxis = (kaxis+1-1)%3+1, (kaxis+2-1)%3+1  # Prize for 1 based index :)
-    iindexes = indices[iaxis]:indices[iaxis+1]-1
-    jindexes = indices[jaxis]:indices[jaxis+1]-1
-    for (k, (i, j)) in enumerate(zip(iindexes, jindexes))
-        @inbounds w[k] = X[i]*Y[j] - X[j]*Y[i]
+function cross!{T1, T2, T3}(k::Int,
+                            X::AbstractArray{T1, 4},
+                            Y::AbstractArray{T2, 4},
+                            w::AbstractArray{T3, 3})
+    @assert size(X) == size(Y) && size(X)[1:3] == size(w)
+    kp, kpp = (k+1-1)%3+1, (k+2-1)%3+1
+    @nloops 3 i w begin
+        @inbounds (@nref 3 w i) = 
+        (@nref 4 X d->(d<4)?i_d:kp)*(@nref 4 Y d->(d<4)?i_d:kpp)-
+        (@nref 4 X d->(d<4)?i_d:kpp)*(@nref 4 Y d->(d<4)?i_d:kp)
     end
 end
 
@@ -116,17 +116,12 @@ function dns(N)
         broadcast!(*, dU, dU, dealias)
 
         P_hat[:] = zero(eltype(P_hat))
-        indices = linind(dU)
-        for axis in 1:last(size(dU))
-            for (j, i) in enumerate(indices[axis]:indices[axis+1]-1)
-                @inbounds P_hat[j] += dU[i]*K_over_K2[i]
-            end
+        @nloops 4 i dU begin
+            @inbounds (@nref 3 P_hat i) += (@nref 4 dU i) * (@nref 4 K_over_K2 i)
         end
 
-        for axis in 1:last(size(dU))
-            for (j, i) in enumerate(indices[axis]:indices[axis+1]-1)
-                @inbounds dU[i] -= P_hat[j]*K[i] + nu*U_hat[i]*K2[j]
-            end
+        @nloops 4 i dU begin
+            @inbounds (@nref 4 dU i) -= (@nref 3 P_hat i)*(@nref 4 K i) + nu*(@nref 4 U_hat i)*(@nref 3 K2 i)
         end
     end
 
