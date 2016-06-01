@@ -175,4 +175,3 @@ for (i, yi) in enumerate(ys) Uhatd[view(i)...] = yi end
 d3 = [K2.*Uhat[i] for i in 1:3]
 d4 = K2d.*Uhatd
 println(":: $([sumabs2(d3[i]-_(d4, i)) for i in 1:3])")
-
