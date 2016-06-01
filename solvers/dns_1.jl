@@ -108,12 +108,13 @@ function dns(N)
     end
 
     function ComputeRHS!(wcross, wcurl, U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
-        for i in 1:3 ifftn_mpi!(U_hat[view(i)...].*dealias, U(i)) end
+        for i in 1:3 
+            broadcast!(*, wcurl, U_hat[view(i)...], dealias)  # Use wcurl as work array
+            ifftn_mpi!(wcurl, U(i))
+        end
 
         Curl!(wcurl, U_hat, K, curl, dealias)
-        
         Cross!(wcross, U, curl, dU)
-#         broadcast!(*, dU, dU, dealias)
 
         P_hat[:] = zero(eltype(P_hat))
         indices = linind(dU)
