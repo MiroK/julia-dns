@@ -1,65 +1,27 @@
 import MPI
+include("utils.jl")
+using Utils  # Now fftfreq and ndgrid are available
 
+# NOTE: Let A = rand(3, 3)
+# 1. A[:, 1] = rand(3)               Assigns to first column of A
+# 2. slice(A, :, 1) = rand(3)        Assigns to first column of A
+# 3. copy!(A[:, 1], rand(3))         Leaves A alone
+# 4. copy!(slice(A, :, 1), rand(3))  Assigns to first column of A
+# Mainly to use 1. and 3. we want a shortcut for fixing last axis
+view(k::Int, N::Int=4) = [fill(Colon(), N-1)..., k]
 
-# Stuff that python imports.
-"numpy.mgrid[v1, v2]"
-function ndgrid{T}(v1::AbstractVector{T}, v2::AbstractVector{T})
-    m, n = length(v1), length(v2)
-    v1 = reshape(v1, m, 1)
-    v2 = reshape(v2, 1, n)
-    (repmat(v1, 1, n), repmat(v2, m, 1))
-end
-
-"helper"
-function ndgrid_fill(a, v, s, snext)
-    for j = 1:length(a)
-        a[j] = v[div(rem(j-1, snext), s)+1]
-    end
-end
-
-"numpy.mgrid[v1, v2, v3, ...]"
-function ndgrid{T}(vs::AbstractVector{T}...)
-    n = length(vs)
-    sz = map(length, vs)
-    out = ntuple(i->Array{T}(sz), n)
-    s = 1
-    for i=1:n
-        a = out[i]::Array
-        v = vs[i]
-        snext = s*size(a,i)
-        ndgrid_fill(a, v, s, snext)
-        s = snext
-    end
-    out
-end
-
-"numpy.fft.fftfreq"
-function fftfreq(n::Int, d::Real=1.0)
-    val = 1.0/(n*d)
-    results = Array{Int}(n)
-    N = (n-1)÷2 + 1
-    p1 = 0:(N-1)
-    results[1:N] = p1
-    p2 = -n÷2:-1
-    results[N+1:end] = p2
-    results * val
-end
-
-"View of A along the last axis"
-function _{T, N}(A::AbstractArray{T, N}, k::Integer)
-   # @assert 1 <= k <= last(size(A))
+"View of A with last coordinate fixed at k"
+function call{T, N}(A::AbstractArray{T, N}, k::Int)
+   @assert 1 <= k <= size(A, N)
    indices = [fill(Colon(), N-1)..., k]
    slice(A, indices...)
 end
-
-"Indexes for viewing into last axis of 4d array"
-view(k::Integer) = (Colon(), Colon(), Colon(), k)
 
 "Linear indexing along last axis"
 function linind{T, N}(A::AbstractArray{T, N})
     L = prod(size(A)[1:N-1])
     indices = [1]
-    for k in 1:last(size(A)) push!(indices, last(indices)+L) end
+    for k in 1:size(A, N) push!(indices, last(indices)+L) end
     indices
 end
 
@@ -85,12 +47,12 @@ end
 # ----------------------------------------------------------------------------
 
 using Base.LinAlg.BLAS: axpy!
+
 function dns(N)
     MPI.Init()
-    comm = MPI.COMM_WORLD
-    rank = MPI.Comm_rank(comm)
-    num_processes = MPI.Comm_size(comm)
-
+    const comm = MPI.COMM_WORLD
+    const rank = MPI.Comm_rank(comm)
+    const num_processes = MPI.Comm_size(comm)
     const nu = 0.000625
     const dt = 0.01
     const T = 0.1
@@ -101,14 +63,13 @@ function dns(N)
     U = Array{Float64}(N, N, Np, 3)
     curl = similar(U)
     # Complex vectors
-    dU = Array{Complex128}(Nh, Np, N, 3)
+    dU = Array{Complex{Float64}}(Nh, Np, N, 3)
     U_hat, U_hat0, U_hat1 = similar(dU), similar(dU), similar(dU)
     # MPI 
-    Uc_hatT = Array{Complex128}(Nh, N, Np)
-    Uc_hat  = Array{Complex128}(Nh, Np, N)
-    
-    # Complex scalars
-    P_hat = Array{Complex128}(Nh, Np, N)
+    Uc_hat  = Array{Complex{Float64}}(Nh, Np, N)
+    Uc_hatT = Array{Complex{Float64}}(Nh, N, Np)
+    # Complex scalar
+    P_hat = similar(Uc_hat)
     # Real grid
     x = collect(0:N-1)*2*pi/N
     X = similar(U)
@@ -128,7 +89,7 @@ function dns(N)
     end
     # Dealising mask
     const kmax_dealias = 2*Nh/3
-    dealias = reshape(reduce(&, [abs(_(K, i)) .< kmax_dealias for i in 1:3]), Nh, Np, N)
+    dealias = reshape(reduce(&, [abs(K(i)) .< kmax_dealias for i in 1:3]), Nh, Np, N)
     # Runge-Kutta weights
     a = dt*[1./6., 1./3., 1./3., 1./6.]  
     b = dt*[0.5, 0.5, 1.] 
@@ -137,7 +98,7 @@ function dns(N)
     wcurl = Array{eltype(dU)}(Nh, Np, N)
 
     # Define FFT from plan
-    const RFFT2 = plan_rfft(_(U, 1), (1, 2))
+    const RFFT2 = plan_rfft(U(1), (1, 2))
     const FFTZ = plan_fft(Uc_hat, (3,))
     
     Uc_hatT_view = reshape(Uc_hatT, (Nh, Np, num_processes, Np))
@@ -145,26 +106,26 @@ function dns(N)
     
     "fftn from dns.py"
     function fftn_mpi!(u, fu)
-      Uc_hatT[:] = RFFT2*u
-      permutedims!(Uc_hat_view, Uc_hatT_view, (1,2,4,3))
-      Uc_hat_view[:,:,:,:] = MPI.Alltoall(Uc_hat_view, Nh*Np*Np, comm)
-      fu[:] = FFTZ*Uc_hat
+      A_mul_B!(Uc_hatT, RFFT2, u)   # U c_hatT[:] = RFFT2*u
+      permutedims!(Uc_hat_view, Uc_hatT_view, (1, 2, 4, 3))
+      Uc_hat_view[:] = MPI.Alltoall(Uc_hat_view, Nh*Np*Np, comm)
+      A_mul_B!(fu, FFTZ, Uc_hat)    # fu[:] = FFTZ*Uc_hat
     end
     
-    "ifftn from dns.py"
     const IRFFT2 = plan_irfft(Uc_hatT, N, (1, 2))
     const IFFTZ = plan_ifft(Uc_hat, (3,))
+    "ifftn from dns.py"
     function ifftn_mpi!(fu, u)
-       Uc_hat[:] = IFFTZ*fu
-       Uc_hat_view[:,:,:,:] = MPI.Alltoall(Uc_hat_view, Nh*Np*Np, comm)
-       permutedims!(Uc_hatT_view, Uc_hat_view, (1,2,4,3))
-       u[:] = IRFFT2*Uc_hatT
+       A_mul_B!(Uc_hat, IFFTZ, fu)   # Uc_hat[:] = IFFTZ*fu
+       Uc_hat_view[:] = MPI.Alltoall(Uc_hat_view, Nh*Np*Np, comm)
+       permutedims!(Uc_hatT_view, Uc_hat_view, (1, 2, 4, 3))
+       A_mul_B!(u, IRFFT2, Uc_hatT)  # u[:] = IRFFT2*Uc_hatT
     end
 
     function Cross!(w, a, b, c)
         for i in 1:3
             cross(i, a, b, w)
-            fftn_mpi!(w, _(c, i))
+            fftn_mpi!(w, c(i))
         end
     end
 
@@ -173,21 +134,21 @@ function dns(N)
             cross(i, K, a, w)
             scale!(w, im)
             broadcast!(*, w, w, dealias) 
-            ifftn_mpi!(w, _(c, i))
+            ifftn_mpi!(w, c(i))
         end
     end
 
     "sources, rk, out"
     function ComputeRHS!(wcross, wcurl, U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
-        for i in 1:3 ifftn_mpi!(U_hat[view(i)...].*dealias, _(U, i)) end
+        for i in 1:3 
+            broadcast!(*, wcurl, U_hat[view(i)...], dealias)  # Use wcurl as work array
+            ifftn_mpi!(wcurl, U(i))
+        end
 
         Curl!(wcurl, U_hat, K, curl, dealias)
-        
         Cross!(wcross, U, curl, dU)
-#         broadcast!(*, dU, dU, dealias)
 
-        # P_hat[:] = sum(dU.*K_over_K2, 4)
-        P_hat[:] = 0im
+        P_hat[:] = zero(eltype(P_hat))
         indices = linind(dU)
         for axis in 1:last(size(dU))
             for (j, i) in enumerate(indices[axis]:indices[axis+1]-1)
@@ -195,21 +156,18 @@ function dns(N)
             end
         end
 
-        #axpy!(-1., broadcast(*, P_hat, K), dU)
-        #axpy!(-1., nu*broadcast(*, U_hat, K2), dU)
         for axis in 1:last(size(dU))
             for (j, i) in enumerate(indices[axis]:indices[axis+1]-1)
                 @inbounds dU[i] -= P_hat[j]*K[i] + nu*U_hat[i]*K2[j]
             end
         end
-
     end
 
-    U[view(1)...] = sin(_(X, 1)).*cos(_(X, 2)).*cos(_(X, 3))
-    U[view(2)...] = -cos(_(X, 1)).*sin(_(X, 2)).*cos(_(X, 3))
+    U[view(1)...] = sin(X(1)).*cos(X(2)).*cos(X(3))
+    U[view(2)...] = -cos(X(1)).*sin(X(2)).*cos(X(3))
     U[view(3)...] = 0.
 
-    for i in 1:3 fftn_mpi!(_(U, i), _(U_hat, i)) end
+    for i in 1:3 fftn_mpi!(U(i), U_hat(i)) end
 
     t = 0.0
     tstep = 0
@@ -227,20 +185,17 @@ function dns(N)
             axpy!(a[rk], dU, U_hat1)
         end
         U_hat[:] = U_hat1
-        for i in 1:3 ifftn_mpi!(U_hat[view(i)...], _(U, i)) end
+        for i in 1:3 ifftn_mpi!(U_hat[view(i)...], U(i)) end
     end
     one_step = toq()/tstep
 
-    for i in 1:3 ifftn_mpi!(U_hat[view(i)...], _(U, i)) end
+    for i in 1:3 ifftn_mpi!(U_hat[view(i)...], U(i)) end
     
     k = MPI.Reduce(0.5*sumabs2(U)*(1./N)^3, MPI.SUM, 0, comm)
     if rank == 0
       println("$(k), $(one_step)")
     end
-    
     MPI.Finalize()
-    
 end
 
 dns(2^6)
-

@@ -24,6 +24,6 @@ jl, jl_step = jl
 error = abs(py-jl)
 println("Error $(error)")
 println("Python time $(py_time), Julia time w/out JIT $(jl_time): $(round(py_time/jl_time, 2))")
-println("Time per tstep: Python $(py_step), Julia $(jl_step)")
+println("Time per tstep: Python $(py_step), Julia $(jl_step): $(round(py_step/jl_step, 2))")
 println("GC time $(jl_gc) is $(100*round(jl_gc/jl_time, 2))\% of exec")
 println("Memory $(jl_mem/10^9)GB")
