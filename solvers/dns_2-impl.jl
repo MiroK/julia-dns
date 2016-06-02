@@ -19,8 +19,8 @@ end
 "Linear indexing along last axis"
 function linind{T, N}(A::AbstractArray{T, N})
     L = prod(size(A)[1:N-1])
-    indices = [1; zeros(Int, N)]
-    for k in 1:size(A, N) indices[k+1] = indices[k]+L end
+    indices = [1]
+    for k in 1:size(A, N) push!(indices, last(indices)+L) end
     indices
 end
 
@@ -53,6 +53,7 @@ function dns(N)
     const comm = MPI.COMM_WORLD
     const rank = MPI.Comm_rank(comm)
     const num_processes = MPI.Comm_size(comm)
+    @assert num_processes == 1 || num_processes % 2 == 0 "Need even number of workers"
     const nu = 0.000625
     const dt = 0.01
     const T = 0.1
@@ -104,12 +105,17 @@ function dns(N)
     Uc_hatT_view = reshape(Uc_hatT, (Nh, Np, num_processes, Np))
     Uc_hat_view  = reshape(Uc_hat , (Nh, Np, Np, num_processes))
     
+    Uc_hatr = similar(Uc_hat)
+    Uc_hatr_view = reshape(Uc_hatr , (Nh, Np, Np, num_processes))
+    
     "fftn from dns.py"
     function fftn_mpi!(u, fu)
       A_mul_B!(Uc_hatT, RFFT2, u)   # U c_hatT[:] = RFFT2*u
       permutedims!(Uc_hat_view, Uc_hatT_view, (1, 2, 4, 3))
-      Uc_hat_view[:] = MPI.Alltoall(Uc_hat_view, Nh*Np*Np, comm)
-      A_mul_B!(fu, FFTZ, Uc_hat)    # fu[:] = FFTZ*Uc_hat
+      #Uc_hat_view[:] = MPI.Alltoall!(Uc_hat_view, Nh*Np*Np, comm)
+      # A_mul_B!(fu, FFTZ, Uc_hat)    # fu[:] = FFTZ*Uc_hat
+      MPI.Alltoall!(Uc_hatr_view, Uc_hat_view, Nh*Np*Np, comm)
+      A_mul_B!(fu, FFTZ, Uc_hatr)    # fu[:] = FFTZ*Uc_hat  # hat_viewc, hatc
     end
     
     const IRFFT2 = plan_irfft(Uc_hatT, N, (1, 2))
@@ -117,8 +123,10 @@ function dns(N)
     "ifftn from dns.py"
     function ifftn_mpi!(fu, u)
        A_mul_B!(Uc_hat, IFFTZ, fu)   # Uc_hat[:] = IFFTZ*fu
-       Uc_hat_view[:] = MPI.Alltoall(Uc_hat_view, Nh*Np*Np, comm)
-       permutedims!(Uc_hatT_view, Uc_hat_view, (1, 2, 4, 3))
+       # Uc_hat_view[:] = MPI.Alltoall!(Uc_hat_view, Nh*Np*Np, comm)
+       # permutedims!(Uc_hatT_view, Uc_hat_view, (1, 2, 4, 3))
+       MPI.Alltoall!(Uc_hatr_view, Uc_hat_view, Nh*Np*Np, comm)
+       permutedims!(Uc_hatT_view, Uc_hatr_view, (1, 2, 4, 3))
        A_mul_B!(u, IRFFT2, Uc_hatT)  # u[:] = IRFFT2*Uc_hatT
     end
 
@@ -195,4 +203,5 @@ function dns(N)
     if rank == 0
       println("$(k), $(one_step)")
     end
+    (k, one_step)
 end
