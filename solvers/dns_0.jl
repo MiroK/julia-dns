@@ -58,6 +58,8 @@ typealias CArray Array{CmplT}
 # ----------------------------------------------------------------------------
 
 function dns(N)
+    @assert N > 0 && (N & (N-1)) == 0 "N must be a power of 2"
+
     nu = 0.000625
     dt = 0.01
     T = 0.1

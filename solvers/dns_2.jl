@@ -49,7 +49,8 @@ end
 using Base.LinAlg.BLAS: axpy!
 
 function dns(N)
-    @assert mod(N, 2) == 0 "Need even number of processes"
+    @assert N > 0 && (N & (N-1)) == 0 "N must be a power of 2"
+
     MPI.Init()
     const comm = MPI.COMM_WORLD
     const rank = MPI.Comm_rank(comm)

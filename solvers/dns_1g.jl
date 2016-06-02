@@ -17,14 +17,6 @@ function call{T, N}(A::AbstractArray{T, N}, k::Int)
    slice(A, indices...)
 end
 
-"Linear indexing along last axis"
-function linind{T, N}(A::AbstractArray{T, N})
-    L = prod(size(A)[1:N-1])
-    indices = [1]
-    for k in 1:size(A, N) push!(indices, last(indices)+L) end
-    indices
-end
-
 "Component of the cross product [X \times Y]_k = w"
 function cross!{T1, T2, T3}(k::Int,
                             X::AbstractArray{T1, 4},
@@ -44,6 +36,8 @@ end
 using Base.LinAlg.BLAS: axpy!
 
 function dns(N)
+    @assert N > 0 && (N & (N-1)) == 0 "N must be a power of 2"
+
     const nu = 0.000625
     const dt = 0.01
     const T = 0.1

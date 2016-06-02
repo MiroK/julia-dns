@@ -45,6 +45,8 @@ end
 using Base.LinAlg.BLAS: axpy!
 
 function dns(N)
+    @assert N > 0 && (N & (N-1)) == 0 "N must be a power of 2"
+
     const nu = 0.000625
     const dt = 0.01
     const T = 0.1

@@ -19,8 +19,8 @@ end
 "Linear indexing along last axis"
 function linind{T, N}(A::AbstractArray{T, N})
     L = prod(size(A)[1:N-1])
-    indices = [1]
-    for k in 1:size(A, N) push!(indices, last(indices)+L) end
+    indices = [1; zeros(Int, N)]
+    for k in 1:size(A, N) indices[k+1] = indices[k]+L end
     indices
 end
 
@@ -48,7 +48,8 @@ end
 using Base.LinAlg.BLAS: axpy!
 
 function dns(N)
-    @assert mod(N, 2) == 0 "Need even number of processes"
+    @assert N > 0 && (N & (N-1)) == 0 "N must be a power of 2"
+
     const comm = MPI.COMM_WORLD
     const rank = MPI.Comm_rank(comm)
     const num_processes = MPI.Comm_size(comm)
