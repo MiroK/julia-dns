@@ -1,3 +1,7 @@
 *.swp
 *.mem
 
+*.pdf
+*.aux
+*.log
+
