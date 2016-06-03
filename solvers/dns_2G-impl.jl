@@ -1,4 +1,4 @@
-# dns_2 with code generation for loops
+# dns_2g with code object based FFTs
 include("utils.jl")
 using Utils  # Now fftfreq and ndgrid are available
 using Base.Cartesian
@@ -24,6 +24,73 @@ function cross!{T1, T2, T3}(k::Int,
         (@nref 4 X d->(d<4)?i_d:kp)*(@nref 4 Y d->(d<4)?i_d:kpp)-
         (@nref 4 X d->(d<4)?i_d:kpp)*(@nref 4 Y d->(d<4)?i_d:kp)
     end
+end
+
+# Spectral transformation of three dimensional data aligned
+# such that the last component is parallelized across processes
+immutable SpecTransf{T<:Real}
+    # Plans
+    plan12::FFTW.rFFTWPlan{T}
+    plan3::FFTW.cFFTWPlan
+    # Work arrays for transformations
+    vT::Array{Complex{T}, 3}
+    vT_view::Array{Complex{T}, 4}
+    v::Array{Complex{T}, 3}
+    v_view::Array{Complex{T}, 4}
+    v_recv::Array{Complex{T}, 3}
+    v_recv_view::Array{Complex{T}, 4}
+    # Communicator
+    comm::MPI.Comm
+    # Amount of data to be send by MPI
+    chunk::Int
+
+    # Inner constructor
+    function SpecTransf(A, comm)
+        # Verify input
+        sizes = size(A)
+        N = first(sizes)
+        Nh = N÷2+1
+        p = MPI.Comm_size(comm)
+        Np = N÷p
+        @assert size(A) == (N, N, Np)
+
+        # Allocate work arrays
+        vT, v = Array{Complex{T}}(Nh, N, Np), Array{Complex{T}}(Nh, Np, N)
+        vT_view, v_view = reshape(vT, (Nh, Np, p, Np)), reshape(v, (Nh, Np, Np, p))
+        # For MPI.Alltoall! preallocate the receiving buffer
+        v_recv = similar(v); v_recv_view = reshape(v_recv, (Nh, Np, Np, p))
+
+        # Plan Fourier transformations
+        plan12 = plan_rfft(A, (1, 2))
+        plan3 = plan_fft!(v, (3, ))
+        # Compute the inverse plans
+        inv(plan12); inv(plan3)
+
+        chunk = Nh*Np*Np
+        # Now we are ready
+        new(plan12, plan3,
+            vT, vT_view, v, v_view, v_recv, v_recv_view,
+            comm, chunk)
+    end
+end
+
+# Constructor
+SpecTransf{T<:Real}(A::AbstractArray{T, 3}, comm::Any) = SpecTransf{T}(A, comm)
+
+# Transform real to complex as complex = T o real
+function apply{T<:Real}(fu::AbstractArray{Complex{T}, 3}, F::SpecTransf{T}, u::AbstractArray{T})
+    A_mul_B!(F.vT, F.plan12, u)
+    permutedims!(F.v_view, F.vT_view, [1, 2, 4, 3])
+    MPI.Alltoall!(F.v_recv_view, F.v_view, F.chunk, F.comm)
+    F.plan3*F.v_recv; fu[:] = F.v_recv
+end
+
+# Transform complex to real as real = T o complex
+function apply_inv{T<:Real}(u::AbstractArray{T}, F::SpecTransf{T}, fu::AbstractArray{Complex{T}, 3})
+    F.plan3.pinv*fu; F.v[:] = fu
+    MPI.Alltoall!(F.v_recv_view, F.v_view, F.chunk, F.comm)
+    permutedims!(F.vT_view, F.v_recv_view, [1, 2, 4, 3])
+    A_mul_B!(u, F.plan12.pinv, F.vT)
 end
 
 # ----------------------------------------------------------------------------
@@ -81,63 +148,35 @@ function dns(N)
     wcross = Array{eltype(U)}(N, N, Np)
     wcurl = Array{eltype(dU)}(Nh, Np, N)
 
-    # Define FFT from plan
-    const RFFT2 = plan_rfft(U(1), (1, 2))
-    const FFTZ = plan_fft(Uc_hat, (3,))
-    
-    Uc_hatT_view = reshape(Uc_hatT, (Nh, Np, num_processes, Np))
-    Uc_hat_view  = reshape(Uc_hat , (Nh, Np, Np, num_processes))
-    
-    Uc_hatr = similar(Uc_hat)
-    Uc_hatr_view = reshape(Uc_hatr , (Nh, Np, Np, num_processes))
-    
-    "fftn from dns.py"
-    function fftn_mpi!(u, fu)
-      A_mul_B!(Uc_hatT, RFFT2, u)   # U c_hatT[:] = RFFT2*u
-      permutedims!(Uc_hat_view, Uc_hatT_view, (1, 2, 4, 3))
-      #Uc_hat_view[:] = MPI.Alltoall!(Uc_hat_view, Nh*Np*Np, comm)
-      # A_mul_B!(fu, FFTZ, Uc_hat)    # fu[:] = FFTZ*Uc_hat
-      MPI.Alltoall!(Uc_hatr_view, Uc_hat_view, Nh*Np*Np, comm)
-      A_mul_B!(fu, FFTZ, Uc_hatr)    # fu[:] = FFTZ*Uc_hat  # hat_viewc, hatc
-    end
-    
-    const IRFFT2 = plan_irfft(Uc_hatT, N, (1, 2))
-    const IFFTZ = plan_ifft(Uc_hat, (3,))
-    "ifftn from dns.py"
-    function ifftn_mpi!(fu, u)
-       A_mul_B!(Uc_hat, IFFTZ, fu)   # Uc_hat[:] = IFFTZ*fu
-       # Uc_hat_view[:] = MPI.Alltoall!(Uc_hat_view, Nh*Np*Np, comm)
-       # permutedims!(Uc_hatT_view, Uc_hat_view, (1, 2, 4, 3))
-       MPI.Alltoall!(Uc_hatr_view, Uc_hat_view, Nh*Np*Np, comm)
-       permutedims!(Uc_hatT_view, Uc_hatr_view, (1, 2, 4, 3))
-       A_mul_B!(u, IRFFT2, Uc_hatT)  # u[:] = IRFFT2*Uc_hatT
-    end
+    # Instantiate spectral transformation
+    const F = SpecTransf(wcross, comm) 
 
-    function Cross!(w, a, b, c)
+    function Cross!(F, w, a, b, c)
         for i in 1:3
             cross!(i, a, b, w)
-            fftn_mpi!(w, c(i))
+            apply(c(i), F, w)
         end
     end
 
-    function Curl!(w, a, K, c, dealias)
+    function Curl!(F, w, a, K, c, dealias)
         for i in 3:-1:1
             cross!(i, K, a, w)
             scale!(w, im)
             broadcast!(*, w, w, dealias) 
-            ifftn_mpi!(w, c(i))
+            apply_inv(c(i), F, w)
         end
     end
 
     "sources, rk, out"
-    function ComputeRHS!(wcross, wcurl, U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
+    function ComputeRHS!(F, wcross, wcurl, 
+                         U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
         for i in 1:3 
             broadcast!(*, wcurl, U_hat[view(i)...], dealias)  # Use wcurl as work array
-            ifftn_mpi!(wcurl, U(i))
+            apply_inv(U(i), F, wcurl)
         end
 
-        Curl!(wcurl, U_hat, K, curl, dealias)
-        Cross!(wcross, U, curl, dU)
+        Curl!(F, wcurl, U_hat, K, curl, dealias)
+        Cross!(F, wcross, U, curl, dU)
 
         P_hat[:] = zero(eltype(P_hat))
         @nloops 4 i dU begin
@@ -153,7 +192,7 @@ function dns(N)
     U[view(2)...] = -cos(X(1)).*sin(X(2)).*cos(X(3))
     U[view(3)...] = 0.
 
-    for i in 1:3 fftn_mpi!(U(i), U_hat(i)) end
+    for i in 1:3 apply(U_hat(i), F, U(i)) end
 
     t = 0.0
     tstep = 0
@@ -163,7 +202,8 @@ function dns(N)
         U_hat1[:] = U_hat; U_hat0[:] = U_hat
         
         for rk in 1:4
-            ComputeRHS!(wcross, wcurl, U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
+            ComputeRHS!(F, wcross, wcurl,
+                        U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
             if rk < 4
                 U_hat[:] = U_hat0
                 axpy!(b[rk], dU, U_hat)
@@ -171,11 +211,11 @@ function dns(N)
             axpy!(a[rk], dU, U_hat1)
         end
         U_hat[:] = U_hat1
-        for i in 1:3 ifftn_mpi!(U_hat[view(i)...], U(i)) end
+        for i in 1:3 apply_inv(U(i), F, U_hat[view(i)...]) end
     end
     one_step = toq()/tstep
 
-    for i in 1:3 ifftn_mpi!(U_hat[view(i)...], U(i)) end
+    for i in 1:3 apply_inv(U(i), F, U_hat[view(i)...]) end
     
     k = MPI.Reduce(0.5*sumabs2(U)*(1./N)^3, MPI.SUM, 0, comm)
     if rank == 0
