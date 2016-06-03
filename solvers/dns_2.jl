@@ -20,9 +20,8 @@ end
 "Linear indexing along last axis"
 function linind{T, N}(A::AbstractArray{T, N})
     L = prod(size(A)[1:N-1])
-    indices = [1]
-    for k in 1:size(A, N) push!(indices, last(indices)+L) end
-    indices
+    indices = [1; fill(L, size(A, N))]
+    cumsum(indices)
 end
 
 "Component of the cross product [X \times Y]_k = w"
