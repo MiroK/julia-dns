@@ -127,8 +127,10 @@ function dns(N)
 
     t = 0.0
     tstep = 0
-    tic()
+    t_min, t_max = NaN, 0
     while t < T-1e-8
+        tic()
+
         t += dt; tstep += 1
         U_hat1[:] = U_hat; U_hat0[:] = U_hat
         
@@ -143,9 +145,12 @@ function dns(N)
 
         U_hat[:] = U_hat1
         for i in 1:3 ifftn_mpi!(U_hat[view(i)...], U(i)) end
+
+        time_step = toq()
+        t_min = min(time_step, t_min)
+        t_max = max(time_step, t_max)
     end
-    one_step = toq()/tstep
 
     k = 0.5*sumabs2(U)*(1./N)^3
-    (k, one_step)
+    (k, t_min, t_max)
 end

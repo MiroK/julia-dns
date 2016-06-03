@@ -19,8 +19,9 @@ end
 "Linear indexing along last axis"
 function linind{T, N}(A::AbstractArray{T, N})
     L = prod(size(A)[1:N-1])
-    indices = [1; fill(L, size(A, N))]
-    cumsum(indices)
+    indices = [1]
+    for k in 1:size(A, N) push!(indices, last(indices)+L) end
+    indices
 end
 
 "Component of the cross product [X \times Y]_k = w"
@@ -178,8 +179,9 @@ function dns(N)
 
     t = 0.0
     tstep = 0
-    tic()
+    t_min, t_max = NaN, 0
     while t < T-1e-8
+        tic()
         t += dt; tstep += 1
         U_hat1[:] = U_hat; U_hat0[:] = U_hat
         
@@ -193,14 +195,19 @@ function dns(N)
         end
         U_hat[:] = U_hat1
         for i in 1:3 ifftn_mpi!(U_hat[view(i)...], U(i)) end
+
+        time_step = toq()
+        t_min = min(time_step, t_min)
+        t_max = max(time_step, t_max)
     end
-    one_step = toq()/tstep
 
     for i in 1:3 ifftn_mpi!(U_hat[view(i)...], U(i)) end
     
     k = MPI.Reduce(0.5*sumabs2(U)*(1./N)^3, MPI.SUM, 0, comm)
+    t_min = MPI.Reduce(t_min, MPI.MIN, 0, comm)
+    t_max = MPI.Reduce(t_max, MPI.MAX, 0, comm)
     if rank == 0
-      println("$(k), $(one_step)")
+      println("$(k), $(t_min) $(t_max)")
     end
-    (k, one_step)
+    (k, t_min, t_max)
 end
