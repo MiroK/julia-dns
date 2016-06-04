@@ -47,6 +47,36 @@ function fftfreq(n::Int, d::Real=1.0)
     results * val
 end
 
+"Modifies while loop such that ivar and avar returns mpi-reduced minimal and
+maximal times that it takes to execute once the body of the loop."
+macro mpitime(loop, ivar, avar)
+    _mpi_time(loop, ivar, avar) 
+end
+
+function _mpi_time(loop, ivar, avar) 
+    loop.head != :while && error("Not a while loop")
+
+    tstep = symbol(string(ivar), string(avar))
+
+    # Modify internals of the loop
+    internals = loop.args[2]
+    internals.head == :quote && error("I did not expect this")
+    insert!(internals.args, 1, :(tic()))          # Time the internals
+    push!(internals.args, :($tstep = toq()))
+    push!(internals.args, :($ivar = min($tstep, $ivar)))  # Update min/max
+    push!(internals.args, :($avar = max($tstep, $avar)))
+    
+    body = quote
+        $ivar, t_max = NaN, 0
+        $loop
+        $ivar = MPI.Reduce($ivar, MPI.MIN, 0, MPI.COMM_WORLD)
+        $avar = MPI.Reduce($avar, MPI.MAX, 0, MPI.COMM_WORLD)
+    end
+
+    ex = Expr(:escape, body)
+    ex
+end
+
 export ndgrid, fftfreq
 
 end
