@@ -31,8 +31,7 @@ function cross!{S, T, R}(kaxis::Int, X::AbstractArray{S, 4},
     @assert 1 <= kaxis <= 3 && size(X) == size(Y) && size(X)[1:3] == size(w)
 
     indices = linind(X)
-    axis = [1, 2, 3, 1, 2]
-    iaxis, jaxis = axis[kaxis+1], axis[kaxis+2]
+    iaxis, jaxis = (kaxis+1-1)%3+1, (kaxis+2-1)%3+1  # Prize for 1 based index :)
     iindexes = indices[iaxis]:indices[iaxis+1]-1
     jindexes = indices[jaxis]:indices[jaxis+1]-1
     for (k, (i, j)) in enumerate(zip(iindexes, jindexes))
