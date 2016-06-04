@@ -1,5 +1,6 @@
 include("utils.jl")
 using Utils  # Now fftfreq and ndgrid are available
+using Compat
 
 # NOTE: Let A = rand(3, 3)
 # 1. A[:, 1] = rand(3)               Assigns to first column of A
@@ -10,10 +11,10 @@ using Utils  # Now fftfreq and ndgrid are available
 view(k::Int, N::Int=4) = [fill(Colon(), N-1)..., k]
 
 "View of A with last coordinate fixed at k"
-function call{T, N}(A::AbstractArray{T, N}, k::Int)
-   @assert 1 <= k <= size(A, N)
-   indices = [fill(Colon(), N-1)..., k]
-   slice(A, indices...)
+@compat function call{T, N}(A::Array{T, N}, k::Int)
+    @assert 1 <= k <= size(A, N)
+    indices = [fill(Colon(), N-1)..., k]
+    slice(A, indices...)
 end
 
 "Linear indexing along last axis"

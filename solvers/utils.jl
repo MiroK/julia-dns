@@ -77,6 +77,6 @@ function _mpi_time(loop, ivar, avar)
     ex
 end
 
-export ndgrid, fftfreq
+export ndgrid, fftfreq, @mpitime
 
 end

@@ -38,7 +38,3 @@ baz(A)
 @time for i in 1:1000 foo(A) end
 @time for i in 1:1000 bar(A) end
 @time for i in 1:1000 baz(A) end
-
-
-
-    
