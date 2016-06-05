@@ -85,8 +85,11 @@ for i in range(3):
 
 t = 0.0
 tstep = 0
-tic = time.time()
+
+t_min, t_max = 1E100, 0
 while t < T-1e-8:
+    time_step = time.time()
+
     t += dt; tstep += 1
     U_hat1[:] = U_hat0[:] = U_hat
     for rk in range(4):
@@ -96,9 +99,16 @@ while t < T-1e-8:
     U_hat[:] = U_hat1[:]
     for i in range(3):
         U[i] = ifftn_mpi(U_hat[i], U[i])
-one_step = (time.time() - tic)/tstep
+
+    time_step = time.time() - time_step
+    t_min = min(t_min, time_step)
+    t_max = max(t_max, time_step)
+
+t_min = comm.reduce(t_min, MPI.MIN)
+t_max = comm.reduce(t_max, MPI.MAX)
 k = comm.reduce(0.5*sum(U*U)*(1./N)**3)
 
 if rank == 0:
     print k
-    print one_step
+    print t_min
+    print t_max

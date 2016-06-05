@@ -1,9 +1,5 @@
 include("utils.jl")
 using Utils  # Now fftfreq and ndgrid are available
-using Base.Cartesian
-using Compat
-
-FFTW.set_num_threads(2)
 
 # NOTE: Let A = rand(3, 3)
 # 1. A[:, 1] = rand(3)               Assigns to first column of A
@@ -14,24 +10,18 @@ FFTW.set_num_threads(2)
 view(k::Int, N::Int=4) = [fill(Colon(), N-1)..., k]
 
 "View of A with last coordinate fixed at k"
-@compat function call{T, N}(A::Array{T, N}, k::Int)
+function call{T, N}(A::AbstractArray{T, N}, k::Int)
    @assert 1 <= k <= size(A, N)
    indices = [fill(Colon(), N-1)..., k]
    slice(A, indices...)
 end
 
-"Component of the cross product [X \times Y]_k = w"
-function cross!{T1, T2, T3}(k::Int,
-                            X::AbstractArray{T1, 4},
-                            Y::AbstractArray{T2, 4},
-                            w::AbstractArray{T3, 3})
-    @assert size(X) == size(Y) && size(X)[1:3] == size(w)
-    kp, kpp = (k+1-1)%3+1, (k+2-1)%3+1
-    @nloops 3 i w begin
-        @inbounds (@nref 3 w i) = 
-        (@nref 4 X d->(d<4)?i_d:kp)*(@nref 4 Y d->(d<4)?i_d:kpp)-
-        (@nref 4 X d->(d<4)?i_d:kpp)*(@nref 4 Y d->(d<4)?i_d:kp)
-    end
+"Linear indexing along last axis"
+function linind{T, N}(A::AbstractArray{T, N})
+    L = prod(size(A)[1:N-1])
+    indices = [1]
+    for k in 1:size(A, N) push!(indices, last(indices)+L) end
+    indices
 end
 
 # ----------------------------------------------------------------------------
@@ -39,8 +29,6 @@ end
 using Base.LinAlg.BLAS: axpy!
 
 function dns(N)
-    @assert N > 0 && (N & (N-1)) == 0 "N must be a power of 2"
-
     const nu = 0.000625
     const dt = 0.01
     const T = 0.1
@@ -80,6 +68,8 @@ function dns(N)
     # Work arrays for cross
     wcross = Array{eltype(U)}(N, N, N)
     wcurl = Array{eltype(dU)}(Nh, N, N)
+    # Precompute linear indexing
+    const INDICES = linind(dU)
 
     # Define (I)RFFTs
     const RFFT = plan_rfft(wcross, (1, 2, 3))
@@ -95,28 +85,48 @@ function dns(N)
         end
     end
 
-    function Curl!(w, a, K, c, dealias)
+    function Curl!(w, a, K, c)
         for i in 3:-1:1
             cross!(i, K, a, w)
             scale!(w, im)
-            broadcast!(*, w, w, dealias)
             ifftn_mpi!(w, c(i))
         end
     end
 
+    "Component of the cross product [X \times Y]_k = w"
+    function cross!{S, T, R}(kaxis::Int, X::AbstractArray{S, 4},
+                                         Y::AbstractArray{T, 4},
+                                         w::AbstractArray{R, 3})
+        @assert 1 <= kaxis <= 3 && size(X) == size(Y) && size(X)[1:3] == size(w)
+
+        iaxis, jaxis = (kaxis+1-1)%3+1, (kaxis+2-1)%3+1  # Prize for 1 based index :)
+        iindexes = INDICES[iaxis]:INDICES[iaxis+1]-1
+        jindexes = INDICES[jaxis]:INDICES[jaxis+1]-1
+        for (k, (i, j)) in enumerate(zip(iindexes, jindexes))
+            @inbounds w[k] = X[i]*Y[j] - X[j]*Y[i]
+        end
+    end
+
     function ComputeRHS!(wcross, wcurl, U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
-        for i in 1:3 ifftn_mpi!(U_hat[view(i)...].*dealias, U(i)) end
-
-        Curl!(wcurl, U_hat, K, curl, dealias)
-        Cross!(wcross, U, curl, dU)
-
-        P_hat[:] = zero(eltype(P_hat))
-        @nloops 4 i dU begin
-            @inbounds (@nref 3 P_hat i) += (@nref 4 dU i) * (@nref 4 K_over_K2 i)
+        if rk > 1
+            for i in 1:3 ifftn_mpi!(U_hat[view(i)...], U(i)) end
         end
 
-        @nloops 4 i dU begin
-            @inbounds (@nref 4 dU i) -= (@nref 3 P_hat i)*(@nref 4 K i) + nu*(@nref 4 U_hat i)*(@nref 3 K2 i)
+        Curl!(wcurl, U_hat, K, curl)
+        Cross!(wcross, U, curl, dU)
+        broadcast!(*, dU, dU, dealias)
+
+        P_hat[:] = zero(eltype(P_hat))
+        for axis in 1:last(size(dU))
+            for (j, i) in enumerate(INDICES[axis]:INDICES[axis+1]-1)
+                @inbounds P_hat[j] += dU[i]*K_over_K2[i]
+            end
+        end
+
+        for axis in 1:last(size(dU))
+            for (j, i) in enumerate(INDICES[axis]:INDICES[axis+1]-1)
+                @inbounds dU[i] -= P_hat[j]*K[i] + nu*U_hat[i]*K2[j]
+            end
         end
     end
 
@@ -142,9 +152,6 @@ function dns(N)
             end
             axpy!(a[rk], dU, U_hat1)
         end
-
-        U_hat[:] = U_hat1
-        for i in 1:3 ifftn_mpi!(U_hat[view(i)...], U(i)) end
 
         time_step = toq()
         t_min = min(time_step, t_min)

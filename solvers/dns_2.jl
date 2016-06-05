@@ -49,7 +49,8 @@ end
 using Base.LinAlg.BLAS: axpy!
 
 function dns(N)
-    @assert mod(N, 2) == 0 "Need even number of processes"
+    @assert N > 0 && (N & (N-1)) == 0 "N must be a power of 2"
+
     MPI.Init()
     comm = MPI.COMM_WORLD
     rank = MPI.Comm_rank(comm)
@@ -175,8 +176,10 @@ function dns(N)
 
     t = 0.0
     tstep = 0
-    tic()
+    t_min, t_max = NaN, 0
     while t < T-1e-8
+        tic()
+
         t += dt; tstep += 1
         U_hat1[:] = U_hat; U_hat0[:] = U_hat
         
@@ -190,14 +193,19 @@ function dns(N)
         end
         U_hat[:] = U_hat1
         for i in 1:3 ifftn_mpi!(U_hat[view(i)...], U(i)) end
+
+        time_step = toq()
+        t_min = min(time_step, t_min)
+        t_max = max(time_step, t_max)
     end
-    one_step = toq()/tstep
 
     for i in 1:3 ifftn_mpi!(U_hat[view(i)...], U(i)) end
     
     k = MPI.Reduce(0.5*sumabs2(U)*(1./N)^3, MPI.SUM, 0, comm)
+    t_min = MPI.Reduce(t_min, MPI.MIN, 0, comm)
+    t_max = MPI.Reduce(t_max, MPI.MAX, 0, comm)
     if rank == 0
-      println("$(k), $(one_step)")
+      println("$(k), $(t_min) $(t_max)")
     end
     MPI.Finalize()
 end

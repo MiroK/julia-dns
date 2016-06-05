@@ -1,7 +1,6 @@
 # Take the example of computing P_hat. We do it with linear
 # indexing can it be done faster?
 
-
 "Linear indexing along last axis"
 function linind{T, N}(A::AbstractArray{T, N})
     L = prod(size(A)[1:N-1])
@@ -43,10 +42,10 @@ using Base.Cartesian
                                     K_over_K2::Array{T, N},
                                     P_hat::Array{Complex{T}, M})
     quote
-        P_hat[:] = zero(Complex128)
+        P_hat[:] = zero(Complex{T})
         @assert M == N-1
         @nloops $N i dU begin
-            (@nref $M P_hat i) += (@nref $N dU i) * (@nref $N K_over_K2 i)
+            @inbounds (@nref $M P_hat i) += (@nref $N dU i) * (@nref $N K_over_K2 i)
         end
     end
 end
@@ -59,19 +58,22 @@ dU = rand(Complex128, Nh, N, N, 3)
 K_over_K2 = rand(Float64, Nh, N, N, 3)
 
 P_hat1 = Array{Complex128}(Nh, N, N)
-for i in 1:10
-    @time foo(dU, K_over_K2, P_hat1)
+foo(dU, K_over_K2, P_hat1)
+@ time for i in 1:10
+    foo(dU, K_over_K2, P_hat1)
 end
 println()
 
 P_hat3 = similar(P_hat1)
-for i in 1:10
-    @time foobar(dU, K_over_K2, P_hat3)
+foobar(dU, K_over_K2, P_hat3)
+@time for i in 1:10
+    foobar(dU, K_over_K2, P_hat3)
 end
 println("$(sumabs2(P_hat1-P_hat3))\n")
 
 P_hat2 = similar(P_hat1)
-for i in 1:10
-    @time bar(dU, K_over_K2, P_hat2)
+bar(dU, K_over_K2, P_hat2)
+@time for i in 1:10
+    bar(dU, K_over_K2, P_hat2)
 end
 println("$(sumabs2(P_hat1-P_hat2))\n")

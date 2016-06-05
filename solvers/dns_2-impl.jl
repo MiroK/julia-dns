@@ -1,5 +1,6 @@
 include("utils.jl")
 using Utils  # Now fftfreq and ndgrid are available
+using Compat
 
 # NOTE: Let A = rand(3, 3)
 # 1. A[:, 1] = rand(3)               Assigns to first column of A
@@ -10,7 +11,7 @@ using Utils  # Now fftfreq and ndgrid are available
 view(k::Int, N::Int=4) = [fill(Colon(), N-1)..., k]
 
 "View of A with last coordinate fixed at k"
-function call{T, N}(A::AbstractArray{T, N}, k::Int)
+@compat function call{T, N}(A::Array{T, N}, k::Int)
    @assert 1 <= k <= size(A, N)
    indices = [fill(Colon(), N-1)..., k]
    slice(A, indices...)
@@ -48,10 +49,12 @@ end
 using Base.LinAlg.BLAS: axpy!
 
 function dns(N)
-    @assert mod(N, 2) == 0 "Need even number of processes"
+    @assert N > 0 && (N & (N-1)) == 0 "N must be a power of 2"
+
     const comm = MPI.COMM_WORLD
     const rank = MPI.Comm_rank(comm)
     const num_processes = MPI.Comm_size(comm)
+    @assert num_processes == 1 || num_processes % 2 == 0 "Need even number of workers"
     const nu = 0.000625
     const dt = 0.01
     const T = 0.1
@@ -103,12 +106,17 @@ function dns(N)
     Uc_hatT_view = reshape(Uc_hatT, (Nh, Np, num_processes, Np))
     Uc_hat_view  = reshape(Uc_hat , (Nh, Np, Np, num_processes))
     
+    Uc_hatr = similar(Uc_hat)
+    Uc_hatr_view = reshape(Uc_hatr , (Nh, Np, Np, num_processes))
+    
     "fftn from dns.py"
     function fftn_mpi!(u, fu)
       A_mul_B!(Uc_hatT, RFFT2, u)   # U c_hatT[:] = RFFT2*u
       permutedims!(Uc_hat_view, Uc_hatT_view, (1, 2, 4, 3))
-      Uc_hat_view[:] = MPI.Alltoall(Uc_hat_view, Nh*Np*Np, comm)
-      A_mul_B!(fu, FFTZ, Uc_hat)    # fu[:] = FFTZ*Uc_hat
+      #Uc_hat_view[:] = MPI.Alltoall!(Uc_hat_view, Nh*Np*Np, comm)
+      # A_mul_B!(fu, FFTZ, Uc_hat)    # fu[:] = FFTZ*Uc_hat
+      MPI.Alltoall!(Uc_hatr_view, Uc_hat_view, Nh*Np*Np, comm)
+      A_mul_B!(fu, FFTZ, Uc_hatr)    # fu[:] = FFTZ*Uc_hat  # hat_viewc, hatc
     end
     
     const IRFFT2 = plan_irfft(Uc_hatT, N, (1, 2))
@@ -116,8 +124,10 @@ function dns(N)
     "ifftn from dns.py"
     function ifftn_mpi!(fu, u)
        A_mul_B!(Uc_hat, IFFTZ, fu)   # Uc_hat[:] = IFFTZ*fu
-       Uc_hat_view[:] = MPI.Alltoall(Uc_hat_view, Nh*Np*Np, comm)
-       permutedims!(Uc_hatT_view, Uc_hat_view, (1, 2, 4, 3))
+       # Uc_hat_view[:] = MPI.Alltoall!(Uc_hat_view, Nh*Np*Np, comm)
+       # permutedims!(Uc_hatT_view, Uc_hat_view, (1, 2, 4, 3))
+       MPI.Alltoall!(Uc_hatr_view, Uc_hat_view, Nh*Np*Np, comm)
+       permutedims!(Uc_hatT_view, Uc_hatr_view, (1, 2, 4, 3))
        A_mul_B!(u, IRFFT2, Uc_hatT)  # u[:] = IRFFT2*Uc_hatT
     end
 
@@ -169,10 +179,8 @@ function dns(N)
     for i in 1:3 fftn_mpi!(U(i), U_hat(i)) end
 
     t = 0.0
-    tstep = 0
-    tic()
-    while t < T-1e-8
-        t += dt; tstep += 1
+    @mpitime while t < T-1e-8
+        t += dt
         U_hat1[:] = U_hat; U_hat0[:] = U_hat
         
         for rk in 1:4
@@ -185,13 +193,14 @@ function dns(N)
         end
         U_hat[:] = U_hat1
         for i in 1:3 ifftn_mpi!(U_hat[view(i)...], U(i)) end
-    end
-    one_step = toq()/tstep
+    end t_min t_max          # <- the macro gives you min/max computed correctly
 
     for i in 1:3 ifftn_mpi!(U_hat[view(i)...], U(i)) end
     
     k = MPI.Reduce(0.5*sumabs2(U)*(1./N)^3, MPI.SUM, 0, comm)
+
     if rank == 0
-      println("$(k), $(one_step)")
+      println("$(k), $(t_min) $(t_max)")
     end
+    (k, t_min, t_max)
 end
