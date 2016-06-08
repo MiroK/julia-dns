@@ -113,9 +113,9 @@ Cross(X, Y, W)
 CrossG(X, Y, W)
 CrossH(X, Y, W)
 # Speed 
-@time for i in 1:100 Cross(X, Y, W) end
-@time for i in 1:100 CrossG(X, Y, W) end
-@time for i in 1:100 CrossH(X, Y, W) end
+@time for i in 1:5 Cross(X, Y, W) end
+@time for i in 1:5 CrossG(X, Y, W) end
+@time for i in 1:5 CrossH(X, Y, W) end
 # Correctness
 WG = similar(W); CrossG(X, Y, WG)
 WH = similar(W);

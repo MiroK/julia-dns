@@ -1,6 +1,6 @@
-include("utils.jl")
-using Utils  # Now fftfreq and ndgrid are available
-using Compat
+import MPI
+
+import mpiFFT4jl
 
 # NOTE: Let A = rand(3, 3)
 # 1. A[:, 1] = rand(3)               Assigns to first column of A
@@ -11,10 +11,10 @@ using Compat
 view(k::Int, N::Int=4) = [fill(Colon(), N-1)..., k]
 
 "View of A with last coordinate fixed at k"
-@compat function call{T, N}(A::Array{T, N}, k::Int)
-    @assert 1 <= k <= size(A, N)
-    indices = [fill(Colon(), N-1)..., k]
-    slice(A, indices...)
+function call{T, N}(A::AbstractArray{T, N}, k::Int)
+   @assert 1 <= k <= size(A, N)
+   indices = [fill(Colon(), N-1)..., k]
+   slice(A, indices...)
 end
 
 "Linear indexing along last axis"
@@ -26,13 +26,17 @@ function linind{T, N}(A::AbstractArray{T, N})
 end
 
 "Component of the cross product [X \times Y]_k = w"
-function cross!{S, T, R}(kaxis::Int, X::AbstractArray{S, 4},
-                                     Y::AbstractArray{T, 4},
-                                     w::AbstractArray{R, 3})
-    @assert 1 <= kaxis <= 3 && size(X) == size(Y) && size(X)[1:3] == size(w)
+function cross{Xtype, Ytype, Wtype}(kaxis::Integer,
+                                    X::AbstractArray{Xtype, 4},
+                                    Y::AbstractArray{Ytype, 4},
+                                    w::AbstractArray{Wtype, 3})
+    @assert 1 <= kaxis <= 3
+    @assert size(X) == size(Y)
+    @assert size(X)[1:3] == size(w)
 
     indices = linind(X)
-    iaxis, jaxis = (kaxis+1-1)%3+1, (kaxis+2-1)%3+1  # Prize for 1 based index :)
+    axis = [1, 2, 3, 1, 2]
+    iaxis, jaxis = axis[kaxis+1], axis[kaxis+2]
     iindexes = indices[iaxis]:indices[iaxis+1]-1
     jindexes = indices[jaxis]:indices[jaxis+1]-1
     for (k, (i, j)) in enumerate(zip(iindexes, jindexes))
@@ -44,79 +48,79 @@ end
 
 using Base.LinAlg.BLAS: axpy!
 
-function dns(N)
-    @assert N > 0 && (N & (N-1)) == 0 "N must be a power of 2"
+function dns(n)
+    @assert n > 0 && (n & (n-1)) == 0 "N must be a power of 2"
+
+    comm = MPI.COMM_WORLD
+    rank = MPI.Comm_rank(comm)
+    num_processes = MPI.Comm_size(comm)
+    
+#     FFTW.set_num_threads(2)
 
     const nu = 0.000625
     const dt = 0.01
     const T = 0.1
-    const Nh = N÷2+1
+    const N = [n, n, n]    # Global shape of mesh
+    const L = [2pi, 2pi, 2pi] # Real size of mesh
+    
+    FFT = mpiFFT4jl.slab.r2c(N, L, comm)
 
+    real_shape = mpiFFT4jl.slab.real_shape(FFT)
+    real_vector_shape = tuple(push!([real_shape...], 3)...)    
+    complex_shape = mpiFFT4jl.slab.complex_shape(FFT)
+    complex_vector_shape = tuple(push!([complex_shape...], 3)...)    
     # Real vectors
-    U = Array{Float64}(N, N, N, 3)
+    U = Array{Float64}(real_vector_shape)
     curl = similar(U)
     # Complex vectors
-    dU = Array{Complex{Float64}}(Nh, N, N, 3)
+    dU = Array{Complex{Float64}}(complex_vector_shape)
     U_hat, U_hat0, U_hat1 = similar(dU), similar(dU), similar(dU)
-    # Complex scalars
-    P_hat = Array{eltype(dU)}(Nh, N, N)
+    # Complex scalar
+    P_hat = zeros(Complex{Float64}, complex_shape)
     # Real grid
-    x = collect(0:N-1)*2*pi/N
-    X = similar(U)
-    for (i, Xi) in enumerate(ndgrid(x, x, x)) X[view(i)...] = Xi end
+    X = mpiFFT4jl.slab.get_local_mesh(FFT)
+    
     # Wave number grid
-    kx = fftfreq(N, 1./N)
-    kz = kx[1:(N÷2+1)]; kz[end] *= -1
-    K = Array{eltype(U)}(Nh, N, N, 3)
-    for (i, Ki) in enumerate(ndgrid(kz, kx, kx)) K[view(i)...] = Ki end
+    K = mpiFFT4jl.slab.get_local_wavenumbermesh(FFT)
+    
     # Square of wave number vectors
-    K2 = Array{eltype(U)}(Nh, N, N)
-    sumabs2!(K2, K)
+    K2 = reshape(sumabs2(K, 4), complex_shape)
+    
     # K/K2
     K_over_K2 = K./K2             
     # Fix division by zero
-    for i in 1:3 K_over_K2[1, 1, 1, i] = K[1, 1, 1, i] end
-    # Dealising mask
-    const kmax_dealias = 2*Nh/3
-    dealias = reshape(reduce(&, [abs(K(i)) .< kmax_dealias for i in 1:3]), Nh, N, N)
+    if rank == 0
+        for i in 1:3 K_over_K2[1, 1, 1, i] = K[1, 1, 1, i] end
+    end
+    
     # Runge-Kutta weights
     a = dt*[1./6., 1./3., 1./3., 1./6.]  
     b = dt*[0.5, 0.5, 1.] 
     # Work arrays for cross
-    wcross = Array{eltype(U)}(N, N, N)
-    wcurl = Array{eltype(dU)}(Nh, N, N)
+    wcross = Array{eltype(U)}(real_shape)
+    wcurl = Array{eltype(dU)}(complex_shape)
 
-    # Define (I)RFFTs
-    const RFFT = plan_rfft(wcross, (1, 2, 3))
-    fftn_mpi!(u, fu) = A_mul_B!(fu, RFFT, u)
-
-    const IRFFT = plan_irfft(wcurl, N, (1, 2, 3))
-    ifftn_mpi!(fu, u) = A_mul_B!(u, IRFFT, fu)
-
-    function Cross!(w, a, b, c)
+    function Cross!(w, a, b, c, FFT)
         for i in 1:3
-            cross!(i, a, b, w)
-            fftn_mpi!(w, c(i))
+            cross(i, a, b, w)
+            mpiFFT4jl.slab.rfft3(FFT, c(i), w)
         end
     end
 
-    function Curl!(w, a, K, c, dealias)
+    function Curl!(w, a, K, c, FFT)
         for i in 3:-1:1
-            cross!(i, K, a, w)
+            cross(i, K, a, w)
             scale!(w, im)
-            broadcast!(*, w, w, dealias) 
-            ifftn_mpi!(w, c(i))
+            mpiFFT4jl.slab.irfft3(FFT, c(i), w, 1)
         end
     end
 
-    function ComputeRHS!(wcross, wcurl, U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
-        for i in 1:3 
-            broadcast!(*, wcurl, U_hat[view(i)...], dealias)  # Use wcurl as work array
-            ifftn_mpi!(wcurl, U(i))
-        end
+    "sources, rk, out"
+    function ComputeRHS!(wcross, wcurl, U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU, FFT)
+        for i in 1:3 mpiFFT4jl.slab.irfft3(FFT, U(i), U_hat[view(i)...], 1) end
 
-        Curl!(wcurl, U_hat, K, curl, dealias)
-        Cross!(wcross, U, curl, dU)
+        Curl!(wcurl, U_hat, K, curl, FFT)
+        Cross!(wcross, U, curl, dU, FFT)
 
         P_hat[:] = zero(eltype(P_hat))
         indices = linind(dU)
@@ -137,8 +141,8 @@ function dns(N)
     U[view(2)...] = -cos(X(1)).*sin(X(2)).*cos(X(3))
     U[view(3)...] = 0.
 
-    for i in 1:3 fftn_mpi!(U(i), U_hat(i)) end
-
+    for i in 1:3 mpiFFT4jl.slab.rfft3(FFT,  U_hat(i), U(i)) end
+        
     t = 0.0
     tstep = 0
     t_min, t_max = NaN, 0
@@ -149,23 +153,24 @@ function dns(N)
         U_hat1[:] = U_hat; U_hat0[:] = U_hat
         
         for rk in 1:4
-            ComputeRHS!(wcross, wcurl, U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
+            ComputeRHS!(wcross, wcurl, U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU, FFT)
             if rk < 4
                 U_hat[:] = U_hat0
                 axpy!(b[rk], dU, U_hat)
             end
             axpy!(a[rk], dU, U_hat1)
         end
-
         U_hat[:] = U_hat1
-        for i in 1:3 ifftn_mpi!(U_hat[view(i)...], U(i)) end
+        for i in 1:3 mpiFFT4jl.slab.irfft3(FFT, U(i), U_hat[view(i)...]) end
 
         time_step = toq()
         t_min = min(time_step, t_min)
         t_max = max(time_step, t_max)
     end
-
-    for i in 1:3 ifftn_mpi!(U_hat[view(i)...], U(i)) end
-    k = 0.5*sumabs2(U)*(1./N)^3
+    
+    k = MPI.Reduce(0.5*sumabs2(U)*(1./prod(FFT.N)), MPI.SUM, 0, comm)
+    t_min = MPI.Reduce(t_min, MPI.MIN, 0, comm)
+    t_max = MPI.Reduce(t_max, MPI.MAX, 0, comm)
     (k, t_min)
 end
+
