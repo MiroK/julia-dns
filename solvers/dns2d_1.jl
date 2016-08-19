@@ -105,13 +105,6 @@ function dns(N)
     const IRFFT = plan_irfft(wcurl, N, (1, 2))
     ifftn_mpi!(fu, u) = A_mul_B!(u, IRFFT, fu)
 
-    function Cross!(w, a, b, c)
-        for i in 1:3
-            cross!(i, a, b, w)
-            fftn_mpi!(w, c(i))
-        end
-    end
-
     function Curl!(w, a, K, c, dealias)
         cross!(K, a, w)
         scale!(w, im)
@@ -136,7 +129,8 @@ function dns(N)
         end
         fftn_mpi!(F(2), dU(1))
         fftn_mpi!(-1.0*F(1), dU(2))
-        #Cross!(wcross, U, curl, dU)
+        
+        for i in 1:2 broadcast!(*, dU, dU[view(i)...], dealias) end
 
         P_hat[:] = zero(eltype(P_hat))
         for axis in 1:last(size(dU))
