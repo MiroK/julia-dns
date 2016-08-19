@@ -5,7 +5,7 @@ Created on Fri 19 Aug 11:28:46 2016
 @author: Diako Darian
 
 2-dimensional DNS-solver using Fourier-Galerkin method
-Linear indexing is used for calulations.
+Linear indexing is used for the calculations.
 =#
 
 using PyCall
