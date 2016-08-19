@@ -1,5 +1,12 @@
-# 2-dimensional Navier-Stokes equation with boussinesq approximation
-# Solved using Fourier-Galerkin method
+#=
+Created on Fri 19 Aug 11:28:46 2016
+
+@author: Diako Darian
+
+2-dimensional Navier-Stokes equation with boussinesq approximation
+Solved using Fourier-Galerkin method
+
+=#
 
 using PyCall
 import IJulia

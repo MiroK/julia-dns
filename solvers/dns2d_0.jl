@@ -83,7 +83,7 @@ function dns(N)
     end
 
     "sources, rk, out"
-    function ComputeRHS!(U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU, S, X, t)
+    function ComputeRHS!(U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
         if rk > 1
             for i in 1:2 ifft2_mpi!(U_hat[i], U[i]) end
         end
@@ -115,7 +115,7 @@ function dns(N)
         U_hat1[:] = U_hat[:]; U_hat0[:]=U_hat[:]
         
         for rk in 1:4
-            ComputeRHS!(U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU, S, X, t)
+            ComputeRHS!(U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU)
             if rk < 4 U_hat[:] = U_hat0[:] + b[rk]*dU[:] end
             for i in 1:2 U_hat1[i] += a[rk]*dU[i] end
         end
