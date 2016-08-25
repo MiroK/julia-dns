@@ -27,5 +27,6 @@ there are never 4 nested for loops. *This code runs 3.4 times faster than Python
   allocated for the data/work arrays.* Compared to `dns_0.jl` the code did not
 loose much of compactness. In summary our goal on a single CPU was achieved.
 + `dns_1g.jl` uses macros to generate code requiring looping over 4d arrays
-+ `dbs_2.jl` uses [MPI.jl](https://github.com/JuliaParallel/MPI.jl) to run in 
++ `dns_2.jl` uses [MPI.jl](https://github.com/JuliaParallel/MPI.jl) to run in 
 parallel.
++ `dns_3.jl` uses [mpiFFT4jl](https://github.com/spectralDNS/mpiFFT4jl)
