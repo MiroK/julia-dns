@@ -1,6 +1,7 @@
 import MPI
 
-import mpiFFT4jl
+import mpiFFT4jl.slab: r2c, rfft3, irfft3, real_shape, complex_shape,
+                       get_local_mesh, get_local_wavenumbermesh
 
 # NOTE: Let A = rand(3, 3)
 # 1. A[:, 1] = rand(3)               Assigns to first column of A
@@ -63,28 +64,28 @@ function dns(n)
     const N = [n, n, n]    # Global shape of mesh
     const L = [2pi, 2pi, 2pi] # Real size of mesh
     
-    FFT = mpiFFT4jl.slab.r2c(N, L, comm)
+    FFT = r2c(N, L, comm)
 
-    real_shape = mpiFFT4jl.slab.real_shape(FFT)
-    real_vector_shape = tuple(push!([real_shape...], 3)...)    
-    complex_shape = mpiFFT4jl.slab.complex_shape(FFT)
-    complex_vector_shape = tuple(push!([complex_shape...], 3)...)    
+    rshape = real_shape(FFT)
+    rvector_shape = tuple(push!([rshape...], 3)...)    
+    cshape = complex_shape(FFT)
+    cvector_shape = tuple(push!([cshape...], 3)...)    
     # Real vectors
-    U = Array{Float64}(real_vector_shape)
+    U = Array{Float64}(rvector_shape)
     curl = similar(U)
     # Complex vectors
-    dU = Array{Complex{Float64}}(complex_vector_shape)
+    dU = Array{Complex{Float64}}(cvector_shape)
     U_hat, U_hat0, U_hat1 = similar(dU), similar(dU), similar(dU)
     # Complex scalar
-    P_hat = zeros(Complex{Float64}, complex_shape)
+    P_hat = zeros(Complex{Float64}, cshape)
     # Real grid
-    X = mpiFFT4jl.slab.get_local_mesh(FFT)
+    X = get_local_mesh(FFT)
     
     # Wave number grid
-    K = mpiFFT4jl.slab.get_local_wavenumbermesh(FFT)
+    K = get_local_wavenumbermesh(FFT)
     
     # Square of wave number vectors
-    K2 = reshape(sumabs2(K, 4), complex_shape)
+    K2 = reshape(sumabs2(K, 4), cshape)
     
     # K/K2
     K_over_K2 = K./K2             
@@ -97,13 +98,13 @@ function dns(n)
     a = dt*[1./6., 1./3., 1./3., 1./6.]  
     b = dt*[0.5, 0.5, 1.] 
     # Work arrays for cross
-    wcross = Array{eltype(U)}(real_shape)
-    wcurl = Array{eltype(dU)}(complex_shape)
+    wcross = Array{eltype(U)}(rshape)
+    wcurl = Array{eltype(dU)}(cshape)
 
     function Cross!(w, a, b, c, FFT)
         for i in 1:3
             cross(i, a, b, w)
-            mpiFFT4jl.slab.rfft3(FFT, c(i), w)
+            rfft3(FFT, c(i), w)
         end
     end
 
@@ -111,13 +112,13 @@ function dns(n)
         for i in 3:-1:1
             cross(i, K, a, w)
             scale!(w, im)
-            mpiFFT4jl.slab.irfft3(FFT, c(i), w, 1)
+            irfft3(FFT, c(i), w, 1)
         end
     end
 
     "sources, rk, out"
     function ComputeRHS!(wcross, wcurl, U, U_hat, curl, K, K_over_K2, K2, P_hat, nu, rk, dU, FFT)
-        for i in 1:3 mpiFFT4jl.slab.irfft3(FFT, U(i), U_hat[view(i)...], 1) end
+        for i in 1:3 irfft3(FFT, U(i), U_hat[view(i)...], 1) end
 
         Curl!(wcurl, U_hat, K, curl, FFT)
         Cross!(wcross, U, curl, dU, FFT)
@@ -141,7 +142,7 @@ function dns(n)
     U[view(2)...] = -cos(X(1)).*sin(X(2)).*cos(X(3))
     U[view(3)...] = 0.
 
-    for i in 1:3 mpiFFT4jl.slab.rfft3(FFT,  U_hat(i), U(i)) end
+    for i in 1:3 rfft3(FFT,  U_hat(i), U(i)) end
         
     t = 0.0
     tstep = 0
@@ -161,7 +162,7 @@ function dns(n)
             axpy!(a[rk], dU, U_hat1)
         end
         U_hat[:] = U_hat1
-        for i in 1:3 mpiFFT4jl.slab.irfft3(FFT, U(i), U_hat[view(i)...]) end
+        for i in 1:3 irfft3(FFT, U(i), U_hat[view(i)...]) end
 
         time_step = toq()
         t_min = min(time_step, t_min)
