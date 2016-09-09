@@ -450,6 +450,7 @@ function mhd(n)
     U[view(5)...] = cos(X(1)).*cos(X(2)).*cos(X(3))
     U[view(6)...] = 0.
 
+    #  taking fft
     for i in 1:6 rfft3(FFT,  U_hat(i), U(i)) end
 
     t = 0.0
