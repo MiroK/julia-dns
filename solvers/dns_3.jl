@@ -172,6 +172,6 @@ function dns(n)
     k = MPI.Reduce(0.5*sumabs2(U)*(1./prod(FFT.N)), MPI.SUM, 0, comm)
     t_min = MPI.Reduce(t_min, MPI.MIN, 0, comm)
     t_max = MPI.Reduce(t_max, MPI.MAX, 0, comm)
-    (k, t_min)
+    (k, t_min, t_max)
 end
 
